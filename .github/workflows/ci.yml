@@ -5,13 +5,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: voidzero-dev/setup-vp@v1
         with:
           node-version: 24
-      - run: npm ci
-      - run: npm run typecheck
-      - run: npm test
-      - run: npm run build
-      - run: npm run smoke
+          cache: true
+      - run: vp install --frozen-lockfile
+      - run: vp check
+      - run: vp run typecheck
+      - run: vp test
+      - run: vp run build
+      - run: vp run smoke
       - name: Ensure committed bundle is up to date
         run: git diff --exit-code -- mcp-server/dist

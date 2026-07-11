@@ -3,8 +3,8 @@
 // to disk as the `resources/updated` notifications arrive — before the
 // generate_image call returns. Requires the AZURE_OPENAI_* env vars (a real
 // generation runs). Usage:
-//   npm run build
-//   node scripts/preview-client.mjs "your prompt here"
+//   vp run build
+//   vp run preview "your prompt here"
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { ResourceUpdatedNotificationSchema } from "@modelcontextprotocol/sdk/types.js";
@@ -14,7 +14,8 @@ import path from "node:path";
 const PREVIEW_URI = "imagegen://preview";
 const EXT = { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp" };
 
-const prompt = process.argv.slice(2).join(" ") || "a red fox sitting in snow, minimal flat vector illustration";
+const prompt =
+  process.argv.slice(2).join(" ") || "a red fox sitting in snow, minimal flat vector illustration";
 const outDir = path.resolve("preview-out");
 fs.mkdirSync(outDir, { recursive: true });
 
@@ -56,14 +57,20 @@ try {
   await new Promise((r) => setTimeout(r, 300));
 
   console.log("\ntool result:");
-  for (const block of result.content ?? []) if (block.type === "text") console.log("  " + block.text.replace(/\n/g, "\n  "));
+  for (const block of result.content ?? [])
+    if (block.type === "text") console.log("  " + block.text.replace(/\n/g, "\n  "));
   console.log(`\ncaptured ${frames} live preview frame(s) in ${outDir}`);
-  if (frames === 0) console.log("(the model emitted no partials this run — common for simple/fast prompts; the final image still saved)");
+  if (frames === 0)
+    console.log(
+      "(the model emitted no partials this run — common for simple/fast prompts; the final image still saved)",
+    );
 
   await client.close();
   process.exit(0);
 } catch (e) {
   console.error(`\nFAILED: ${e?.message ?? e}`);
-  console.error("If this is a missing-env error, set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_IMAGE_DEPLOYMENT (and a key or Entra login).");
+  console.error(
+    "If this is a missing-env error, set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_IMAGE_DEPLOYMENT (and a key or Entra login).",
+  );
   process.exit(1);
 }

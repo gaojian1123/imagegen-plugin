@@ -152,7 +152,13 @@ app.ontoolresult = async (result) => {
     try {
       const r = await app.callServerTool({ name: "read_image", arguments: arg });
       const d = dataUriOf(r);
-      if (d) resolved.push({ dataUri: d, filename: im.filename ?? (im.path ? basename(im.path) : "image"), path: im.path, revised_prompt: im.revised_prompt });
+      if (d)
+        resolved.push({
+          dataUri: d,
+          filename: im.filename ?? (im.path ? basename(im.path) : "image"),
+          path: im.path,
+          revised_prompt: im.revised_prompt,
+        });
     } catch {
       // skip an image the UI can't read; others still render
     }
