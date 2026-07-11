@@ -1,8 +1,8 @@
 # imagegen
 
-A GitHub Copilot CLI plugin that generates and edits images with a `gpt-image-2`
-model deployed on Azure OpenAI (Microsoft Foundry). It adds two MCP tools
-(`generate_image`, `edit_image`).
+An MCP plugin for GitHub Copilot CLI and OpenAI Codex that generates and edits
+images with a `gpt-image-2` model deployed on Azure OpenAI (Microsoft Foundry).
+It adds two MCP tools (`generate_image`, `edit_image`).
 
 On hosts that support [MCP Apps](https://github.com/modelcontextprotocol/ext-apps),
 each generated/edited image renders inline in an interactive panel where you can
@@ -19,17 +19,12 @@ are never written to disk.
 ## Prerequisites
 
 - Node.js 24 or newer.
+- Codex CLI 0.144.1 or newer when using Codex.
 - An Azure OpenAI resource with a `gpt-image` model deployment.
 
 ## Configure
 
-Ask Copilot to "Configure imagegen", or open the native MCP editor directly:
-
-```text
-/mcp edit imagegen
-```
-
-In **Environment Variables**, enter one of these JSON objects.
+Choose one of these environment variable sets.
 
 Microsoft Entra ID:
 
@@ -50,35 +45,62 @@ API key:
 }
 ```
 
-Enter API keys only in the MCP editor, never in chat. For Entra ID, omit
-`AZURE_OPENAI_API_KEY`; sign in with `az login` or use a managed identity or
-service principal. The identity needs the **Cognitive Services OpenAI User**
-role. Press **Ctrl+S**, then retry the image request.
+### GitHub Copilot CLI
+
+Ask Copilot to "Configure imagegen", or open the native MCP editor:
+
+```text
+/mcp edit imagegen
+```
+
+Enter the selected JSON object under **Environment Variables**, press
+**Ctrl+S**, then retry the image request.
+
+### OpenAI Codex
+
+Set the selected names and values in the environment that launches Codex, then
+restart Codex. The plugin passes those variables to the MCP server without
+storing their values in the repository.
+
+Enter API keys only in the MCP editor or your local environment, never in chat.
+For Entra ID, omit `AZURE_OPENAI_API_KEY`; sign in with `az login` or use a
+managed identity or service principal. The identity needs the **Cognitive
+Services OpenAI User** role.
 
 Images are shown in MCP Apps and returned inline to other clients. They are
 **not** written to disk by default; pass `output_dir` to save files instead.
 
 ## Install
 
-Directly from the repo:
+### GitHub Copilot CLI
+
+Directly from the repository:
 
 ```shell
-copilot plugin install OWNER/REPO
+copilot plugin install gaojian1123/imagegen-plugin
 ```
 
 Or via the marketplace:
 
 ```shell
-copilot plugin marketplace add OWNER/REPO
+copilot plugin marketplace add gaojian1123/imagegen-plugin
 copilot plugin install imagegen@imagegen
 ```
 
-The MCP server is registered automatically from `.mcp.json`; complete the
+### OpenAI Codex
+
+```shell
+codex plugin marketplace add gaojian1123/imagegen-plugin
+codex plugin add imagegen@imagegen
+```
+
+Copilot registers the MCP server from `.mcp.json`; Codex registers it from
+`.codex-plugin/plugin.json`. Both launch the same bundled server. Complete the
 **Configure** step above before generating an image.
 
 ## Use
 
-Ask Copilot, for example:
+Ask Copilot or Codex, for example:
 
 - "Generate a 1024x1024 image of a red fox on a transparent background."
 - "Edit ./fox.png to add a snowy background."
@@ -143,11 +165,5 @@ MIT
 
 ## Before you publish
 
-Fill in these placeholders first:
-
-- `plugin.json` → `author.name`
-- `.github/plugin/marketplace.json` → `owner.name`
-- `LICENSE` → copyright holder (replace `YOUR NAME`)
-- `README.md` install commands → your real `OWNER/REPO`
-
-Then run one real `generate_image` against your deployment to confirm credentials and the live API contract.
+Run one real `generate_image` against your deployment to confirm credentials
+and the live API contract.

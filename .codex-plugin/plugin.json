@@ -1,0 +1,33 @@
+{
+  "name": "imagegen",
+  "version": "0.1.0",
+  "description": "Generate and edit images with a gpt-image-2 Azure OpenAI (Foundry) deployment.",
+  "author": {
+    "name": "Jian Gao",
+    "email": "gaojian0727@outlook.com"
+  },
+  "repository": "https://github.com/gaojian1123/imagegen-plugin",
+  "license": "MIT",
+  "keywords": ["image", "gpt-image", "azure-openai", "mcp"],
+  "skills": "./skills/",
+  "mcpServers": {
+    "imagegen": {
+      "command": "node",
+      "args": ["./mcp-server/dist/index.js"],
+      "cwd": ".",
+      "env_vars": ["AZURE_OPENAI_ENDPOINT", "AZURE_OPENAI_IMAGE_DEPLOYMENT", "AZURE_OPENAI_API_KEY"]
+    }
+  },
+  "interface": {
+    "displayName": "Imagegen",
+    "shortDescription": "Generate and edit images with Azure OpenAI",
+    "longDescription": "Generate and edit images with a gpt-image-2 deployment on Azure OpenAI, with optional local file output.",
+    "developerName": "Jian Gao",
+    "category": "Productivity",
+    "capabilities": ["Interactive", "Write"],
+    "defaultPrompt": [
+      "Generate a square image of a red fox.",
+      "Edit an image to add a snowy background."
+    ]
+  }
+}
