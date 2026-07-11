@@ -19,9 +19,11 @@
 - **Dependencies:** runtime deps are `openai`, `@modelcontextprotocol/sdk`,
   `zod`, `@azure/identity` (keyless Entra ID auth), and
   `@modelcontextprotocol/ext-apps` (MCP Apps UI helpers, used server- and
-  UI-side). Keep it minimal; `vite-plus`, its managed `vite` alias, `typescript`,
-  `@types/node`, and `vite-plugin-singlefile` are dev-only. Vite+ supplies Vite,
-  Rolldown, Vitest, tsdown, Oxlint, and Oxfmt.
+  UI-side). Keep it minimal; `vite-plus`, `@voidzero-dev/vite-plus-core`, its
+  managed `vite` alias, `typescript`, `@types/node`, and `vite-plugin-singlefile`
+  are dev-only. The core pin keeps plugin and Vite+ types unified while TypeScript
+  7 is ahead of Vite+'s peer range; remove it once Vite+ supports TypeScript 7.
+  Vite+ supplies Vite, Rolldown, Vitest, tsdown, Oxlint, and Oxfmt.
 - **Secrets:** never commit credentials or put them in `.mcp.json`. The server reads
   `AZURE_OPENAI_*` from the environment.
 - **Env var names:** `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_KEY`,
