@@ -22,6 +22,11 @@ Tell the user to open the native MCP editor:
 Tell the user to set the variables below in the environment that launches
 Codex, then restart Codex. Do not use `/mcp edit` in Codex.
 
+## Anthropic Claude Code
+
+Tell the user to set the variables below in the environment that launches
+Claude Code, then start a new session. Do not use `/mcp edit` in Claude Code.
+
 ## Values
 
 Use one of these environment variable sets.
@@ -46,8 +51,8 @@ For API-key authentication:
 ```
 
 In Copilot CLI, enter the selected object under **Environment Variables** and
-press **Ctrl+S**. In Codex, use the same names and values in the local process
-environment. Then retry the image request.
+press **Ctrl+S**. In Codex or Claude Code, use the same names and values in the
+local process environment. Then retry the image request.
 
 - Never ask the user to paste an API key into chat; they must enter it directly
   in the MCP editor or their local environment.

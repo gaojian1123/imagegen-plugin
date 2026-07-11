@@ -1,8 +1,9 @@
 # imagegen
 
-An MCP plugin for GitHub Copilot CLI and OpenAI Codex that generates and edits
-images with a `gpt-image-2` model deployed on Azure OpenAI (Microsoft Foundry).
-It adds two MCP tools (`generate_image`, `edit_image`).
+An MCP plugin for GitHub Copilot CLI, OpenAI Codex, and Anthropic Claude Code
+that generates and edits images with a `gpt-image-2` model deployed on Azure
+OpenAI (Microsoft Foundry). It adds two MCP tools (`generate_image`,
+`edit_image`).
 
 On hosts that support [MCP Apps](https://github.com/modelcontextprotocol/ext-apps),
 each generated/edited image renders inline in an interactive panel where you can
@@ -20,6 +21,7 @@ are never written to disk.
 
 - Node.js 24 or newer.
 - Codex CLI 0.144.1 or newer when using Codex.
+- Claude Code 2.1.204 or newer when using Claude Code.
 - An Azure OpenAI resource with a `gpt-image` model deployment.
 
 ## Configure
@@ -62,6 +64,12 @@ Set the selected names and values in the environment that launches Codex, then
 restart Codex. The plugin passes those variables to the MCP server without
 storing their values in the repository.
 
+### Anthropic Claude Code
+
+Set the selected names and values in the environment that launches Claude Code,
+then start a new session. The plugin passes those variables to the MCP server
+without storing their values in the repository.
+
 Enter API keys only in the MCP editor or your local environment, never in chat.
 For Entra ID, omit `AZURE_OPENAI_API_KEY`; sign in with `az login` or use a
 managed identity or service principal. The identity needs the **Cognitive
@@ -94,13 +102,21 @@ codex plugin marketplace add gaojian1123/imagegen-plugin
 codex plugin add imagegen@imagegen
 ```
 
-Copilot registers the MCP server from `.mcp.json`; Codex registers it from
-`.codex-plugin/plugin.json`. Both launch the same bundled server. Complete the
-**Configure** step above before generating an image.
+### Anthropic Claude Code
+
+```shell
+claude plugin marketplace add gaojian1123/imagegen-plugin
+claude plugin install imagegen@imagegen
+```
+
+Copilot registers the MCP server from `.mcp.json`; Codex and Claude Code use
+their manifests under `.codex-plugin/` and `.claude-plugin/`. All three launch
+the same bundled server. Complete the **Configure** step above before generating
+an image.
 
 ## Use
 
-Ask Copilot or Codex, for example:
+Ask Copilot, Codex, or Claude Code, for example:
 
 - "Generate a 1024x1024 image of a red fox on a transparent background."
 - "Edit ./fox.png to add a snowy background."
