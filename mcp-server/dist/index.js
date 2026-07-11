@@ -52536,7 +52536,7 @@ function registerImagegen(server, client, deployment) {
 		]).default("png").describe("Output image format."),
 		output_compression: numberType().int().min(0).max(100).optional().describe("Compression level 0-100 for webp/jpeg output (GPT image models only; not valid with png)."),
 		n: numberType().int().min(1).max(10).default(1).describe("How many images to generate (max 10)."),
-		output_dir: stringType().optional().describe("Directory to write image files to. Omit to keep the image only in the app (view and Save it there) without writing any file to disk."),
+		output_dir: stringType().min(1, "output_dir must not be empty").optional().describe("Directory to write image files to. Omit to return images inline and keep them in the app without writing files; pass it to avoid embedding image bytes in the tool result."),
 		filename: stringType().optional().describe("Base filename (an index is appended when n > 1).")
 	};
 	const moderation = enumType(["low", "auto"]).default("auto").describe("Content-moderation level for GPT image models; 'low' is less restrictive than the default 'auto'.");
@@ -52550,8 +52550,16 @@ function registerImagegen(server, client, deployment) {
 	})).describe("The generated images. `path` is set when written to disk; `id` is the in-app handle when it wasn't.") };
 	function summarize(results) {
 		return results.map((r) => {
-			return `${r.path ? `Saved ${r.path}` : `Generated ${r.filename} (shown in the app; pass output_dir to also save it to disk)`} (${r.bytes} bytes)${r.revised_prompt ? ` — revised prompt: ${r.revised_prompt}` : ""}`;
+			return `${r.path ? `Saved ${r.path}` : `Generated ${r.filename} (returned inline; pass output_dir to save it to disk)`} (${r.bytes} bytes)${r.revised_prompt ? ` — revised prompt: ${r.revised_prompt}` : ""}`;
 		}).join("\n");
+	}
+	function imageContent(b64, outputFormat) {
+		if (typeof b64 !== "string") throw new Error("Image response is missing base64 data (b64_json).");
+		return {
+			type: "image",
+			data: b64,
+			mimeType: previewMime(outputFormat)
+		};
 	}
 	function savedToResult(s) {
 		return {
@@ -52578,7 +52586,7 @@ function registerImagegen(server, client, deployment) {
 				content: [{
 					type: "text",
 					text: summarize(images)
-				}],
+				}, ...args.output_dir ? [] : data.map((item) => imageContent(item.b64_json, args.output_format))],
 				structuredContent: { images }
 			};
 		} catch (e) {
@@ -52607,20 +52615,25 @@ function registerImagegen(server, client, deployment) {
 			const total = args.partial_images + 1;
 			const token = extra?._meta?.progressToken;
 			let final;
+			let finalContent;
 			for await (const frame of source(client, deployment, extra.signal)) {
-				await previewResource.update(frame.b64, previewMime(args.output_format));
+				const frameContent = imageContent(frame.b64, args.output_format);
+				await previewResource.update(frameContent.data, frameContent.mimeType);
 				if (frame.kind === "final") if (saveDir) {
-					const s = writeB64(frame.b64, path.join(saveDir, finalName));
+					const s = writeB64(frameContent.data, path.join(saveDir, finalName));
 					final = {
 						path: s.path,
 						filename: finalName,
 						bytes: s.bytes
 					};
-				} else final = {
-					id: store.put(frame.b64, previewMime(args.output_format)),
-					filename: finalName,
-					bytes: Buffer.byteLength(frame.b64, "base64")
-				};
+				} else {
+					final = {
+						id: store.put(frameContent.data, frameContent.mimeType),
+						filename: finalName,
+						bytes: Buffer.byteLength(frameContent.data, "base64")
+					};
+					finalContent = frameContent;
+				}
 				if (token !== void 0) {
 					const progress = frame.kind === "final" ? total : frame.index + 1;
 					await extra.sendNotification({
@@ -52639,7 +52652,7 @@ function registerImagegen(server, client, deployment) {
 				content: [{
 					type: "text",
 					text: summarize([final])
-				}],
+				}, ...finalContent ? [finalContent] : []],
 				structuredContent: { images: [final] }
 			};
 		} catch (e) {
@@ -52655,7 +52668,7 @@ function registerImagegen(server, client, deployment) {
 	}
 	K3(server, "generate_image", {
 		title: "Generate image",
-		description: "Generate images from a text prompt. Keeps them in the app by default; pass output_dir to also save files to disk.",
+		description: "Generate images from a text prompt. Returns images inline and in the app by default; pass output_dir to save files instead of embedding image bytes in the tool result.",
 		inputSchema: {
 			prompt: stringType().min(1).describe("What to generate."),
 			...common,
@@ -52667,7 +52680,7 @@ function registerImagegen(server, client, deployment) {
 	}, (args, extra) => args.partial_images > 0 ? runStream(args, extra, (client, deployment, signal) => generateStream(client, deployment, args, signal)) : run(args, (client, deployment) => generate(client, deployment, args)));
 	K3(server, "edit_image", {
 		title: "Edit image",
-		description: "Edit or inpaint one or more existing images with a text prompt. Keeps results in the app by default; pass output_dir to also save files to disk.",
+		description: "Edit or inpaint one or more existing images with a text prompt. Returns results inline and in the app by default; pass output_dir to save files instead of embedding image bytes in the tool result.",
 		inputSchema: {
 			prompt: stringType().min(1).describe("How to edit the image(s)."),
 			images: arrayType(stringType()).min(1).describe("Input images: file paths, or in-app image ids returned by a previous generate/edit that wasn't saved to disk."),

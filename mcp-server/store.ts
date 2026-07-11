@@ -1,7 +1,6 @@
 // A tiny in-memory store for generated image bytes. When a tool isn't asked to
-// write to disk (no output_dir), it keeps the base64 here and returns just an
-// id; the App UI fetches the bytes via read_image({ id }) to display/save. This
-// keeps large base64 out of the model's context AND off the filesystem.
+// write to disk (no output_dir), the App UI fetches the bytes from here via
+// read_image({ id }) to display/save without touching the filesystem.
 export interface ImageStore {
   put(b64: string, mimeType: string): string;
   get(id: string): { b64: string; mimeType: string } | undefined;

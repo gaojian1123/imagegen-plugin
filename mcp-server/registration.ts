@@ -1,6 +1,10 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/protocol.js";
-import type { ServerRequest, ServerNotification } from "@modelcontextprotocol/sdk/types.js";
+import type {
+  ImageContent,
+  ServerRequest,
+  ServerNotification,
+} from "@modelcontextprotocol/sdk/types.js";
 import {
   registerAppTool,
   registerAppResource,
@@ -44,8 +48,7 @@ export function registerImagegen(server: McpServer, client: OpenAI, deployment: 
   const previewResource = attachPreviewResource(server);
 
   // Holds image bytes when a call isn't asked to write them to disk, so the App UI
-  // can fetch them by id (read_image) without a file and without base64 in the
-  // model's context.
+  // can fetch them by id (read_image) independently of the standard inline result.
   const store = createImageStore();
 
   registerAppResource(
@@ -94,9 +97,10 @@ export function registerImagegen(server: McpServer, client: OpenAI, deployment: 
     n: z.number().int().min(1).max(10).default(1).describe("How many images to generate (max 10)."),
     output_dir: z
       .string()
+      .min(1, "output_dir must not be empty")
       .optional()
       .describe(
-        "Directory to write image files to. Omit to keep the image only in the app (view and Save it there) without writing any file to disk.",
+        "Directory to write image files to. Omit to return images inline and keep them in the app without writing files; pass it to avoid embedding image bytes in the tool result.",
       ),
     filename: z.string().optional().describe("Base filename (an index is appended when n > 1)."),
   };
@@ -141,10 +145,16 @@ export function registerImagegen(server: McpServer, client: OpenAI, deployment: 
       .map((r) => {
         const where = r.path
           ? `Saved ${r.path}`
-          : `Generated ${r.filename} (shown in the app; pass output_dir to also save it to disk)`;
+          : `Generated ${r.filename} (returned inline; pass output_dir to save it to disk)`;
         return `${where} (${r.bytes} bytes)${r.revised_prompt ? ` — revised prompt: ${r.revised_prompt}` : ""}`;
       })
       .join("\n");
+  }
+
+  function imageContent(b64: string | undefined, outputFormat: string): ImageContent {
+    if (typeof b64 !== "string")
+      throw new Error("Image response is missing base64 data (b64_json).");
+    return { type: "image", data: b64, mimeType: previewMime(outputFormat) };
   }
 
   // A disk-saved image and an in-store image are the same shape to the UI/model.
@@ -177,7 +187,12 @@ export function registerImagegen(server: McpServer, client: OpenAI, deployment: 
             outputFormat: args.output_format,
           });
       return {
-        content: [{ type: "text" as const, text: summarize(images) }],
+        content: [
+          { type: "text" as const, text: summarize(images) },
+          ...(args.output_dir
+            ? []
+            : data.map((item) => imageContent(item.b64_json, args.output_format))),
+        ],
         structuredContent: { images },
       };
     } catch (e) {
@@ -221,15 +236,22 @@ export function registerImagegen(server: McpServer, client: OpenAI, deployment: 
       const total = args.partial_images + 1;
       const token = extra?._meta?.progressToken;
       let final: ImageResult | undefined;
+      let finalContent: ImageContent | undefined;
       for await (const frame of source(client, deployment, extra.signal)) {
-        await previewResource.update(frame.b64, previewMime(args.output_format));
+        const frameContent = imageContent(frame.b64, args.output_format);
+        await previewResource.update(frameContent.data, frameContent.mimeType);
         if (frame.kind === "final") {
           if (saveDir) {
-            const s = writeB64(frame.b64, path.join(saveDir, finalName));
+            const s = writeB64(frameContent.data, path.join(saveDir, finalName));
             final = { path: s.path, filename: finalName, bytes: s.bytes };
           } else {
-            const id = store.put(frame.b64, previewMime(args.output_format));
-            final = { id, filename: finalName, bytes: Buffer.byteLength(frame.b64, "base64") };
+            const id = store.put(frameContent.data, frameContent.mimeType);
+            final = {
+              id,
+              filename: finalName,
+              bytes: Buffer.byteLength(frameContent.data, "base64"),
+            };
+            finalContent = frameContent;
           }
         }
         if (token !== undefined) {
@@ -254,7 +276,10 @@ export function registerImagegen(server: McpServer, client: OpenAI, deployment: 
       }
       if (!final) throw new Error("Stream ended without a completed image.");
       return {
-        content: [{ type: "text" as const, text: summarize([final]) }],
+        content: [
+          { type: "text" as const, text: summarize([final]) },
+          ...(finalContent ? [finalContent] : []),
+        ],
         structuredContent: { images: [final] },
       };
     } catch (e) {
@@ -272,7 +297,7 @@ export function registerImagegen(server: McpServer, client: OpenAI, deployment: 
     {
       title: "Generate image",
       description:
-        "Generate images from a text prompt. Keeps them in the app by default; pass output_dir to also save files to disk.",
+        "Generate images from a text prompt. Returns images inline and in the app by default; pass output_dir to save files instead of embedding image bytes in the tool result.",
       inputSchema: {
         prompt: z.string().min(1).describe("What to generate."),
         ...common,
@@ -296,7 +321,7 @@ export function registerImagegen(server: McpServer, client: OpenAI, deployment: 
     {
       title: "Edit image",
       description:
-        "Edit or inpaint one or more existing images with a text prompt. Keeps results in the app by default; pass output_dir to also save files to disk.",
+        "Edit or inpaint one or more existing images with a text prompt. Returns results inline and in the app by default; pass output_dir to save files instead of embedding image bytes in the tool result.",
       inputSchema: {
         prompt: z.string().min(1).describe("How to edit the image(s)."),
         images: z
@@ -328,8 +353,7 @@ export function registerImagegen(server: McpServer, client: OpenAI, deployment: 
   // App-only helper the UI calls (never the model): returns image bytes as a data:
   // URI so the app can render/download them. Fetch by `path` (a saved file), by
   // `id` (an in-memory image from a tool result), or with neither to get the latest
-  // streamed partial. Base64 rides this UI channel instead of the tool result,
-  // keeping it out of the model's context.
+  // streamed partial. This lets the app fetch bytes without parsing tool content.
   registerAppTool(
     server,
     "read_image",

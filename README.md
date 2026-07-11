@@ -6,14 +6,15 @@ model deployed on Azure OpenAI (Microsoft Foundry). It adds two MCP tools
 
 On hosts that support [MCP Apps](https://github.com/modelcontextprotocol/ext-apps),
 each generated/edited image renders inline in an interactive panel where you can
-view it and click **Save**. By default nothing is written to disk — pass
-`output_dir` to also save files there (e.g. for non-UI hosts). Either way the tool
-result carries only a small handle — a file path or an in-app id, never base64 —
-so image bytes stay out of the model's context; the panel fetches them over an
-app-only `read_image` helper. `edit_image` accepts either a file path or a
-previous result's in-app **id**, so you can edit an unsaved image without writing
-it first. During streaming (`partial_images > 0`) the panel shows the
-intermediate frames live; streamed frames are never written to disk.
+view it and click **Save**. By default nothing is written to disk, and the tool
+returns standard MCP image content so hosts without MCP Apps can still display
+the result. The host may retain that image in the conversation context. Pass
+`output_dir` to save files and return paths instead, keeping image bytes out of
+the tool result. The app also receives an in-memory id through its app-only
+`read_image` helper. `edit_image` accepts either a file path or a previous
+result's in-app **id**, so you can edit an unsaved image without writing it first.
+During streaming (`partial_images > 0`) the panel shows intermediate frames live;
+streamed frames are never written to disk.
 
 ## Prerequisites
 
@@ -41,8 +42,8 @@ identity when hosted on Azure, or a service principal
 needs the **Cognitive Services OpenAI User** role on the resource. Tokens are
 fetched and refreshed automatically.
 
-Images are shown in the app and **not** written to disk by default; pass the
-optional `output_dir` argument on a tool call to also save files there.
+Images are returned inline, shown in the app, and **not** written to disk by
+default; pass `output_dir` to save files and return paths instead.
 
 PowerShell (persistent, user-level) — then **restart Copilot**:
 

@@ -30,7 +30,7 @@ function basename(p: string): string {
 }
 
 // One image from a tool result: `path` is set when it was saved to disk, `id`
-// when it's only held in the app; `filename` is the download name either way.
+// when it's held in server memory; `filename` is the download name either way.
 interface ResultImage {
   path?: string;
   id?: string;
