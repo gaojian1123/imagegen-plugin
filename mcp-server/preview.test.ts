@@ -21,7 +21,9 @@ test("preview resource: listed, notifies only subscribers, read returns latest f
   await Promise.all([server.connect(serverT), client.connect(clientT)]);
 
   const { resources } = await client.listResources();
-  assert.ok(resources.some((r) => r.uri === PREVIEW_URI), "preview resource is listed");
+  const listed = resources.find((resource) => resource.uri === PREVIEW_URI);
+  assert.ok(listed, "preview resource is listed");
+  assert.equal(listed.mimeType, undefined, "the listing does not claim one fixed image format");
 
   const updates: string[] = [];
   client.setNotificationHandler(ResourceUpdatedNotificationSchema, (n) => {
@@ -33,7 +35,7 @@ test("preview resource: listed, notifies only subscribers, read returns latest f
   // Not subscribed yet: update stores the frame but sends no notification.
   await preview.update(b64("frame0"), "image/png");
   await client.subscribeResource({ uri: PREVIEW_URI });
-  await preview.update(b64("frame1"), "image/png");
+  await preview.update(b64("frame1"), "image/webp");
   await new Promise((r) => setTimeout(r, 20));
 
   assert.deepEqual(updates, [PREVIEW_URI], "one notification, only after subscribing");
@@ -41,7 +43,7 @@ test("preview resource: listed, notifies only subscribers, read returns latest f
   const read = await client.readResource({ uri: PREVIEW_URI });
   const c0 = read.contents[0] as { blob?: string; mimeType?: string };
   assert.equal(c0.blob, b64("frame1"), "read returns the most recent frame");
-  assert.equal(c0.mimeType, "image/png");
+  assert.equal(c0.mimeType, "image/webp");
 
   await client.close();
   await server.close();

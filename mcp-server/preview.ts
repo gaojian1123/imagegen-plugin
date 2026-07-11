@@ -41,8 +41,7 @@ export function attachPreviewResource(server: McpServer): PreviewResource {
     {
       title: "Live generation preview",
       description:
-        "The latest streamed frame of the in-progress image. Populated only while a generate/edit call runs with partial_images > 0. Subscribe to receive resources/updated as each frame arrives, then re-read to render it.",
-      mimeType: "image/png",
+        "The latest frame from the most recent generate/edit call with partial_images > 0. The final frame remains available until the next streamed call starts. Subscribe to receive resources/updated as each frame arrives, then re-read to render it.",
     },
     () => ({ contents: frame ? [{ uri: PREVIEW_URI, mimeType: frame.mimeType, blob: frame.blob }] : [] }),
   );

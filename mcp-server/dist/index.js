@@ -53577,23 +53577,26 @@ async function edit(client2, deployment2, args, store) {
   const resp = await client2.images.edit(params);
   return resp.data ?? [];
 }
-async function* generateStream(client2, deployment2, args) {
+async function* generateStream(client2, deployment2, args, signal) {
   const { prompt, size, quality, background, output_format, partial_images, moderation, output_compression } = args;
   assertValidFormat(background, output_format);
   assertValidSize(size);
-  const stream = await client2.images.generate({
-    model: deployment2,
-    prompt,
-    size,
-    quality,
-    background,
-    output_format,
-    n: 1,
-    stream: true,
-    partial_images,
-    ...moderation ? { moderation } : {},
-    ...output_compression !== void 0 ? { output_compression } : {}
-  });
+  const stream = await client2.images.generate(
+    {
+      model: deployment2,
+      prompt,
+      size,
+      quality,
+      background,
+      output_format,
+      n: 1,
+      stream: true,
+      partial_images,
+      ...moderation ? { moderation } : {},
+      ...output_compression !== void 0 ? { output_compression } : {}
+    },
+    { signal }
+  );
   for await (const ev of stream) {
     if (ev.type === "image_generation.partial_image") {
       yield { kind: "partial", index: ev.partial_image_index, b64: ev.b64_json };
@@ -53602,7 +53605,7 @@ async function* generateStream(client2, deployment2, args) {
     }
   }
 }
-async function* editStream(client2, deployment2, args, store) {
+async function* editStream(client2, deployment2, args, store, signal) {
   const { prompt, images, mask, size, quality, background, output_format, partial_images, output_compression } = args;
   assertValidFormat(background, output_format);
   assertValidSize(size);
@@ -53622,7 +53625,7 @@ async function* editStream(client2, deployment2, args, store) {
     ...output_compression !== void 0 ? { output_compression } : {},
     ...maskFile ? { mask: maskFile } : {}
   };
-  const stream = await client2.images.edit(params);
+  const stream = await client2.images.edit(params, { signal });
   for await (const ev of stream) {
     if (ev.type === "image_edit.partial_image") {
       yield { kind: "partial", index: ev.partial_image_index, b64: ev.b64_json };
@@ -61830,7 +61833,7 @@ function N3(Z, $, J, X, V) {
   return Z.registerResource($, J, { mimeType: p, ...X }, V);
 }
 
-// mcp-server/server.ts
+// mcp-server/registration.ts
 import fs7 from "node:fs";
 import path5 from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
@@ -61849,8 +61852,7 @@ function attachPreviewResource(server2) {
     PREVIEW_URI,
     {
       title: "Live generation preview",
-      description: "The latest streamed frame of the in-progress image. Populated only while a generate/edit call runs with partial_images > 0. Subscribe to receive resources/updated as each frame arrives, then re-read to render it.",
-      mimeType: "image/png"
+      description: "The latest frame from the most recent generate/edit call with partial_images > 0. The final frame remains available until the next streamed call starts. Subscribe to receive resources/updated as each frame arrives, then re-read to render it."
     },
     () => ({ contents: frame ? [{ uri: PREVIEW_URI, mimeType: frame.mimeType, blob: frame.blob }] : [] })
   );
@@ -61896,23 +61898,22 @@ function createImageStore(cap = 24) {
   };
 }
 
-// mcp-server/server.ts
+// mcp-server/registration.ts
 var UI_URI = "ui://imagegen/app.html";
 var here = path5.dirname(fileURLToPath2(import.meta.url));
 var uiHtmlPath = import.meta.url.endsWith(".ts") ? path5.join(here, "dist", "mcp-app.html") : path5.join(here, "mcp-app.html");
 var uiHtml;
-function buildServer(client2, deployment2) {
-  const server2 = new McpServer(
-    { name: "imagegen", version: "0.1.0" },
-    { capabilities: { resources: { subscribe: true } } }
-  );
+function registerImagegen(server2, client2, deployment2) {
   const previewResource = attachPreviewResource(server2);
   const store = createImageStore();
   N3(
     server2,
     "Imagegen UI",
     UI_URI,
-    { description: "Interactive image viewer: shows generated/edited images, a save button, and live streamed partials." },
+    {
+      title: "Imagegen image viewer",
+      description: "Interactive image viewer: shows generated/edited images, a save button, and live streamed partials."
+    },
     () => {
       uiHtml ??= fs7.readFileSync(uiHtmlPath, "utf8");
       return { contents: [{ uri: UI_URI, mimeType: p, text: uiHtml }] };
@@ -61922,7 +61923,7 @@ function buildServer(client2, deployment2) {
     size: external_exports2.string().regex(/^(auto|\d+x\d+)$/, "size must be 'auto' or a WIDTHxHEIGHT string like '1536x864'").default("auto").describe("'auto' (default; the model picks dimensions) or a WIDTHxHEIGHT string for gpt-image-2. Common sizes: 1024x1024, 1536x1024, 1024x1536, 2048x2048, 2048x1152, 3840x2160. Constraints: both edges multiples of 16, longest edge \u2264 3840, long:short ratio \u2264 3:1, total pixels between 655,360 and 8,294,400."),
     quality: external_exports2.enum(["low", "medium", "high", "auto"]).default("auto").describe("Rendering quality; 'auto' (default) lets the model choose. 'high' looks best but is slower and costlier."),
     background: external_exports2.enum(["transparent", "opaque", "auto"]).default("auto").describe("Background; 'transparent' requires png or webp."),
-    output_format: external_exports2.enum(["png", "jpeg", "webp"]).default("png").describe("Saved image file format."),
+    output_format: external_exports2.enum(["png", "jpeg", "webp"]).default("png").describe("Output image format."),
     output_compression: external_exports2.number().int().min(0).max(100).optional().describe("Compression level 0-100 for webp/jpeg output (GPT image models only; not valid with png)."),
     n: external_exports2.number().int().min(1).max(10).default(1).describe("How many images to generate (max 10)."),
     output_dir: external_exports2.string().optional().describe("Directory to write image files to. Omit to keep the image only in the app (view and Save it there) without writing any file to disk."),
@@ -61975,7 +61976,7 @@ function buildServer(client2, deployment2) {
       const total = args.partial_images + 1;
       const token = extra?._meta?.progressToken;
       let final;
-      for await (const frame of source(client2, deployment2)) {
+      for await (const frame of source(client2, deployment2, extra.signal)) {
         await previewResource.update(frame.b64, previewMime(args.output_format));
         if (frame.kind === "final") {
           if (saveDir) {
@@ -62018,7 +62019,7 @@ function buildServer(client2, deployment2) {
     "generate_image",
     {
       title: "Generate image",
-      description: "Generate an image from a text prompt. Saves the image to disk and returns the file path.",
+      description: "Generate images from a text prompt. Keeps them in the app by default; pass output_dir to also save files to disk.",
       inputSchema: {
         prompt: external_exports2.string().min(1).describe("What to generate."),
         ...common,
@@ -62028,14 +62029,14 @@ function buildServer(client2, deployment2) {
       outputSchema,
       _meta: { ui: { resourceUri: UI_URI } }
     },
-    (args, extra) => args.partial_images > 0 ? runStream(args, extra, (client3, deployment3) => generateStream(client3, deployment3, args)) : run(args, (client3, deployment3) => generate(client3, deployment3, args))
+    (args, extra) => args.partial_images > 0 ? runStream(args, extra, (client3, deployment3, signal) => generateStream(client3, deployment3, args, signal)) : run(args, (client3, deployment3) => generate(client3, deployment3, args))
   );
   K3(
     server2,
     "edit_image",
     {
       title: "Edit image",
-      description: "Edit or inpaint one or more existing images with a text prompt. Saves the result to disk and returns the file path.",
+      description: "Edit or inpaint one or more existing images with a text prompt. Keeps results in the app by default; pass output_dir to also save files to disk.",
       inputSchema: {
         prompt: external_exports2.string().min(1).describe("How to edit the image(s)."),
         images: external_exports2.array(external_exports2.string()).min(1).describe("Input images: file paths, or in-app image ids returned by a previous generate/edit that wasn't saved to disk."),
@@ -62046,7 +62047,7 @@ function buildServer(client2, deployment2) {
       outputSchema,
       _meta: { ui: { resourceUri: UI_URI } }
     },
-    (args, extra) => args.partial_images > 0 ? runStream(args, extra, (client3, deployment3) => editStream(client3, deployment3, args, store)) : run(args, (client3, deployment3) => edit(client3, deployment3, args, store))
+    (args, extra) => args.partial_images > 0 ? runStream(args, extra, (client3, deployment3, signal) => editStream(client3, deployment3, args, store, signal)) : run(args, (client3, deployment3) => edit(client3, deployment3, args, store))
   );
   K3(
     server2,
@@ -62059,6 +62060,7 @@ function buildServer(client2, deployment2) {
         id: external_exports2.string().optional().describe("In-app image id from a tool result.")
       },
       outputSchema: { dataUri: external_exports2.string().optional(), path: external_exports2.string().optional(), id: external_exports2.string().optional() },
+      annotations: { readOnlyHint: true, destructiveHint: false },
       _meta: { ui: { resourceUri: UI_URI, visibility: ["app"] } }
     },
     (args) => {
@@ -62081,6 +62083,15 @@ function buildServer(client2, deployment2) {
       }
     }
   );
+}
+
+// mcp-server/server.ts
+function buildServer(client2, deployment2) {
+  const server2 = new McpServer(
+    { name: "imagegen", version: "0.1.0" },
+    { capabilities: { resources: { subscribe: true } } }
+  );
+  registerImagegen(server2, client2, deployment2);
   return server2;
 }
 

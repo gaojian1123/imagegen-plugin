@@ -60,6 +60,33 @@ function showPreview(dataUri: string): void {
   previewImg.src = dataUri;
 }
 
+async function downloadImage(item: ShownImage, button: HTMLButtonElement): Promise<void> {
+  const match = /^data:([^;,]+);base64,(.*)$/.exec(item.dataUri);
+  if (!match) {
+    setStatus("Save failed: invalid image data.");
+    return;
+  }
+  button.disabled = true;
+  try {
+    const result = await app.downloadFile({
+      contents: [{
+        type: "resource",
+        resource: {
+          uri: `file:///${encodeURIComponent(item.filename)}`,
+          mimeType: match[1],
+          blob: match[2],
+        },
+      }],
+    });
+    setStatus(result.isError ? "Save cancelled." : "");
+  } catch (error) {
+    console.error(error);
+    setStatus(`Save failed: ${error instanceof Error ? error.message : String(error)}`);
+  } finally {
+    button.disabled = false;
+  }
+}
+
 function showFinal(items: ShownImage[]): void {
   previewImg = undefined;
   gallery.replaceChildren();
@@ -74,11 +101,11 @@ function showFinal(items: ShownImage[]): void {
 
     const bar = document.createElement("div");
     bar.className = "bar";
-    const save = document.createElement("a");
+    const save = document.createElement("button");
+    save.type = "button";
     save.className = "save";
     save.textContent = "Save";
-    save.href = it.dataUri;
-    save.download = it.filename;
+    save.addEventListener("click", () => void downloadImage(it, save));
     const meta = document.createElement("span");
     meta.className = "meta";
     meta.textContent = it.path ?? `${it.filename} — not saved to disk (click Save to keep it)`;
@@ -165,6 +192,11 @@ app.ontoolresult = async (result) => {
   }
 };
 
+app.ontoolcancelled = ({ reason }) => {
+  stopPolling();
+  setStatus(reason ? `Cancelled: ${reason}` : "Image generation cancelled.");
+};
+
 function applyHostContext(ctx: McpUiHostContext | undefined): void {
   if (!ctx) return;
   if (ctx.theme) applyDocumentTheme(ctx.theme);
@@ -179,4 +211,9 @@ function applyHostContext(ctx: McpUiHostContext | undefined): void {
 app.onhostcontextchanged = applyHostContext;
 
 setStatus("Waiting for image…");
-void app.connect().then(() => applyHostContext(app.getHostContext()));
+void app.connect()
+  .then(() => applyHostContext(app.getHostContext()))
+  .catch((error: unknown) => {
+    console.error(error);
+    setStatus(`Unable to connect to host: ${error instanceof Error ? error.message : String(error)}`);
+  });

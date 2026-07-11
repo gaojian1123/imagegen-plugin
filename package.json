@@ -7,7 +7,7 @@
   "scripts": {
     "build:ui": "vite build",
     "build": "npm run build:ui && esbuild mcp-server/index.ts --bundle --platform=node --format=esm --outfile=mcp-server/dist/index.js --banner:js=\"import{createRequire}from'node:module';const require=createRequire(import.meta.url);\"",
-    "test": "node --test mcp-server/client.test.ts mcp-server/preview.test.ts mcp-server/store.test.ts",
+    "test": "node --test mcp-server/client.test.ts mcp-server/preview.test.ts mcp-server/server.test.ts mcp-server/store.test.ts",
     "typecheck": "tsc",
     "smoke": "node scripts/smoke.mjs",
     "preview": "node scripts/preview-client.mjs",

@@ -257,10 +257,13 @@ test("generateStream sets stream params and translates events to frames", async 
     { type: "image_generation.completed", b64_json: "CC==" },
   ];
   let captured: Record<string, unknown> = {};
+  let requestSignal: AbortSignal | undefined;
+  const controller = new AbortController();
   const fake = {
     images: {
-      generate: async (p: Record<string, unknown>) => {
+      generate: async (p: Record<string, unknown>, options?: { signal?: AbortSignal }) => {
         captured = p;
+        requestSignal = options?.signal;
         return (async function* () {
           for (const e of events) yield e;
         })();
@@ -270,12 +273,13 @@ test("generateStream sets stream params and translates events to frames", async 
   const frames = [];
   for await (const f of generateStream(fake, "gpt-image-2", {
     prompt: "cat", size: "1024x1024", quality: "low", background: "auto", output_format: "png", n: 1, partial_images: 2,
-  })) {
+  }, controller.signal)) {
     frames.push(f);
   }
   assert.equal(captured.stream, true);
   assert.equal(captured.partial_images, 2);
   assert.equal(captured.n, 1);
+  assert.equal(requestSignal, controller.signal);
   assert.deepEqual(frames, [
     { kind: "partial", index: 0, b64: "AA==" },
     { kind: "partial", index: 1, b64: "BB==" },
@@ -292,10 +296,13 @@ test("editStream loads files, sets stream params, and translates edit events", a
     { type: "image_edit.completed", b64_json: "ZZ==" },
   ];
   let captured: Record<string, unknown> = {};
+  let requestSignal: AbortSignal | undefined;
+  const controller = new AbortController();
   const fake = {
     images: {
-      edit: async (p: Record<string, unknown>) => {
+      edit: async (p: Record<string, unknown>, options?: { signal?: AbortSignal }) => {
         captured = p;
+        requestSignal = options?.signal;
         return (async function* () {
           for (const e of events) yield e;
         })();
@@ -305,12 +312,13 @@ test("editStream loads files, sets stream params, and translates edit events", a
   const frames = [];
   for await (const f of editStream(fake, "gpt-image-2", {
     prompt: "make it blue", images: [imgPath], size: "1024x1024", quality: "low", background: "auto", output_format: "png", n: 1, partial_images: 1,
-  }, createImageStore())) {
+  }, createImageStore(), controller.signal)) {
     frames.push(f);
   }
   assert.equal(captured.stream, true);
   assert.equal(captured.partial_images, 1);
   assert.equal(captured.n, 1);
+  assert.equal(requestSignal, controller.signal);
   assert.ok(Array.isArray(captured.image) && (captured.image as unknown[]).length === 1);
   assert.deepEqual(frames, [
     { kind: "partial", index: 0, b64: "AA==" },
