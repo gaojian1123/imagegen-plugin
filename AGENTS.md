@@ -26,3 +26,17 @@
   `AZURE_OPENAI_IMAGE_DEPLOYMENT`. Output directory is a per-call `output_dir`
   tool argument, not an env var; omit it to keep the image in-app only (no file
   written), pass it to save to disk.
+
+## Agent skills
+
+### Issue tracker
+
+Issues and PRDs are tracked in GitHub Issues. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Use the canonical labels `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, and `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+This repo uses a single-context domain-doc layout. See `docs/agents/domain.md`.
