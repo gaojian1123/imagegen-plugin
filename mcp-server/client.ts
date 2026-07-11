@@ -1,0 +1,333 @@
+import fs from "node:fs";
+import path from "node:path";
+import { OpenAI, toFile } from "openai";
+import { DefaultAzureCredential, InteractiveBrowserCredential, ChainedTokenCredential, getBearerTokenProvider } from "@azure/identity";
+import type { ImageStore } from "./store.ts";
+
+// gpt-image-2 accepts arbitrary WIDTHxHEIGHT sizes, so Size is any string; the
+// listed literals are just autocomplete hints for the standard sizes.
+export type Size = "auto" | "1024x1024" | "1024x1536" | "1536x1024" | (string & {});
+export type Quality = "low" | "medium" | "high" | "auto";
+export type Background = "transparent" | "opaque" | "auto";
+export type OutputFormat = "png" | "jpeg" | "webp";
+export type Moderation = "low" | "auto";
+
+type Env = Record<string, string | undefined>;
+
+export interface ClientOptions {
+  baseURL: string;
+  // A string is an Azure API key; a function is an Entra ID bearer-token
+  // provider that the OpenAI client calls (and refreshes) before each request.
+  apiKey: string | (() => Promise<string>);
+}
+
+// Entra ID token audience for the Azure OpenAI /openai/v1 surface (Foundry).
+// NB: the classic /openai/deployments surface uses cognitiveservices.azure.com;
+// v1 uses ai.azure.com — the audiences aren't interchangeable.
+const ENTRA_SCOPE = "https://ai.azure.com/.default";
+
+export interface ImageItem {
+  b64_json?: string;
+  revised_prompt?: string;
+}
+
+export interface SavedImage {
+  path: string;
+  bytes: number;
+  revised_prompt?: string;
+}
+
+// What a generate/edit tool returns per image. `path` is set when the image was
+// written to disk (output_dir given); `id` is set when it was kept in the
+// in-memory store instead. `filename` is the name it has (or would have) on disk
+// — used as the download name in the App UI.
+export interface ImageResult {
+  path?: string;
+  id?: string;
+  filename: string;
+  bytes: number;
+  revised_prompt?: string;
+}
+
+export interface GenerateArgs {
+  prompt: string;
+  size: Size;
+  quality: Quality;
+  background: Background;
+  output_format: OutputFormat;
+  n: number;
+  // moderation is a generate-only param (the SDK's ImageEditParams omits it);
+  // output_compression applies to both generate and edit.
+  moderation?: Moderation;
+  output_compression?: number;
+}
+
+export interface EditArgs extends GenerateArgs {
+  images: string[];
+  mask?: string;
+}
+
+export function isPlaceholder(v: string): boolean {
+  return /^\$\{[^}]*\}$/.test(v.trim());
+}
+
+export function required(env: Env, name: string): string {
+  const v = env[name];
+  if (!v || !String(v).trim()) throw new Error(`Missing required env var: ${name}`);
+  if (isPlaceholder(v)) {
+    throw new Error(`Env var ${name} is an unexpanded placeholder (${v}); set it in your environment.`);
+  }
+  return v;
+}
+
+export function clientOptions(env: Env = process.env): ClientOptions {
+  const endpoint = required(env, "AZURE_OPENAI_ENDPOINT");
+  // The endpoint is used as-is: set it to the full v1 base URL, e.g.
+  // https://YOUR-RESOURCE.openai.azure.com/openai/v1
+  // The /openai/v1 surface routes without an api-version query param, so we
+  // send none (dated api-versions aren't accepted there anyway).
+  const key = env.AZURE_OPENAI_API_KEY;
+  if (key && key.trim() && !isPlaceholder(key)) {
+    return { baseURL: endpoint, apiKey: key };
+  }
+  // No usable key -> Microsoft Entra ID. Hand the base OpenAI client a token
+  // provider as `apiKey`; it fetches + auto-refreshes the bearer token per
+  // request (the documented v1-surface pattern; needs the `Cognitive Services
+  // OpenAI User` role). Try ambient creds first (env / managed identity / az
+  // login), then fall back to an interactive browser sign-in when none exist.
+  // The browser opens lazily on the first image request, not at startup, so the
+  // MCP init handshake can't hang on a human. AZURE_TENANT_ID / AZURE_CLIENT_ID
+  // target your own app registration; otherwise a built-in Azure dev app is used.
+  const credential = new ChainedTokenCredential(
+    new DefaultAzureCredential(),
+    new InteractiveBrowserCredential({ tenantId: env.AZURE_TENANT_ID, clientId: env.AZURE_CLIENT_ID }),
+  );
+  return { baseURL: endpoint, apiKey: getBearerTokenProvider(credential, ENTRA_SCOPE) };
+}
+
+export function getClient(env: Env = process.env): { client: OpenAI; deployment: string } {
+  const deployment = required(env, "AZURE_OPENAI_IMAGE_DEPLOYMENT");
+  return { client: new OpenAI(clientOptions(env)), deployment };
+}
+
+export function assertValidFormat(background: string, outputFormat: string): void {
+  if (background === "transparent" && outputFormat === "jpeg") {
+    throw new Error("Transparent background requires output_format 'png' or 'webp', not 'jpeg'.");
+  }
+}
+
+// gpt-image-2 size constraints (the deployment this server targets). 'auto' and
+// the standard sizes always pass; an explicit WIDTHxHEIGHT is validated locally
+// so a bad size fails fast with a clear message instead of a generic API error.
+export function assertValidSize(size: string): void {
+  if (size === "auto") return;
+  const m = /^(\d+)x(\d+)$/.exec(size);
+  if (!m) throw new Error(`Invalid size '${size}': use 'auto' or a WIDTHxHEIGHT string like '1536x864'.`);
+  const w = Number(m[1]);
+  const h = Number(m[2]);
+  if (w % 16 !== 0 || h % 16 !== 0) throw new Error(`Invalid size ${w}x${h}: width and height must both be multiples of 16.`);
+  if (Math.max(w, h) > 3840) throw new Error(`Invalid size ${w}x${h}: the longest edge must be 3840px or less.`);
+  if (Math.max(w, h) / Math.min(w, h) > 3) throw new Error(`Invalid size ${w}x${h}: the long-to-short edge ratio must not exceed 3:1.`);
+  const pixels = w * h;
+  if (pixels < 655360 || pixels > 8294400) throw new Error(`Invalid size ${w}x${h}: total pixels must be between 655,360 and 8,294,400.`);
+}
+
+const EXT: Record<string, string> = { png: "png", jpeg: "jpg", webp: "webp" };
+
+export function slugify(text: string): string {
+  const s = String(text).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40);
+  return s || "image";
+}
+
+export function timestamp(now: Date): string {
+  const p = (n: number): string => String(n).padStart(2, "0");
+  return `${now.getFullYear()}${p(now.getMonth() + 1)}${p(now.getDate())}-${p(now.getHours())}${p(now.getMinutes())}${p(now.getSeconds())}`;
+}
+
+export interface ResolveFilenamesArgs {
+  filename?: string;
+  prompt?: string;
+  count: number;
+  outputFormat: string;
+  now: Date;
+}
+
+export function resolveFilenames({ filename, prompt, count, outputFormat, now }: ResolveFilenamesArgs): string[] {
+  const ext = EXT[outputFormat] ?? outputFormat;
+  const base = filename ? filename.replace(/\.[^.]+$/, "") : `${slugify(prompt ?? "")}-${timestamp(now)}`;
+  if (count === 1) return [`${base}.${ext}`];
+  return Array.from({ length: count }, (_, i) => `${base}-${i + 1}.${ext}`);
+}
+
+export interface SaveArgs {
+  outputDir: string;
+  filename?: string;
+  prompt?: string;
+  outputFormat: string;
+  now?: Date;
+}
+
+export function writeB64(b64: string | undefined, fullPath: string, revised_prompt?: string): SavedImage {
+  if (typeof b64 !== "string") {
+    throw new Error("Image response is missing base64 data (b64_json).");
+  }
+  const buf = Buffer.from(b64, "base64");
+  fs.mkdirSync(path.dirname(fullPath), { recursive: true });
+  fs.writeFileSync(fullPath, buf);
+  return { path: fullPath, bytes: buf.length, revised_prompt };
+}
+
+export function saveBase64Images(data: ImageItem[], { outputDir, filename, prompt, outputFormat, now = new Date() }: SaveArgs): SavedImage[] {
+  fs.mkdirSync(outputDir, { recursive: true });
+  const names = resolveFilenames({ filename, prompt, count: data.length, outputFormat, now });
+  return data.map((item, i) => writeB64(item.b64_json, path.join(outputDir, names[i]), item.revised_prompt));
+}
+
+export async function generate(client: OpenAI, deployment: string, args: GenerateArgs): Promise<ImageItem[]> {
+  const { prompt, size, quality, background, output_format, n, moderation, output_compression } = args;
+  assertValidFormat(background, output_format);
+  assertValidSize(size);
+  // output_compression is webp/jpeg-only, so forward it only when set rather
+  // than sending a default that would error on png.
+  const body = {
+    model: deployment, prompt, size, quality, background, output_format, n,
+    ...(moderation ? { moderation } : {}),
+    ...(output_compression !== undefined ? { output_compression } : {}),
+  };
+  // v6's generate() overload returns ImagesResponse | Stream; we never stream.
+  const resp = await client.images.generate(body);
+  return (resp as { data?: ImageItem[] }).data ?? [];
+}
+
+const IMAGE_MIME: Record<string, string> = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", webp: "image/webp" };
+
+// Read a saved image file into a data: URI for the App UI to render/download.
+// The path is UI-controlled, so guard it: image extension allowlist + must
+// exist. This blocks reading non-images (e.g. a key file) through the iframe.
+// ponytail: first-party iframe + CSP has no connectDomains (no exfil), so an
+// extension allowlist is proportionate; scope to the output dir if the UI ever
+// loads third-party content.
+export function readImageAsDataUri(p: string): { dataUri: string } {
+  const ext = path.extname(p).slice(1).toLowerCase();
+  const mime = IMAGE_MIME[ext];
+  if (!mime) throw new Error(`Not an image file: ${p}`);
+  if (!fs.existsSync(p)) throw new Error(`Image not found: ${p}`);
+  return { dataUri: `data:${mime};base64,${fs.readFileSync(p).toString("base64")}` };
+}
+
+// The no-output_dir counterpart to saveBase64Images: instead of writing files,
+// keep each image's bytes in the store and return handles (id + the filename it
+// would have had). The App UI fetches the bytes via read_image({ id }).
+export function storeBase64Images(store: ImageStore, data: ImageItem[], { filename, prompt, outputFormat, now = new Date() }: Omit<SaveArgs, "outputDir">): ImageResult[] {
+  const names = resolveFilenames({ filename, prompt, count: data.length, outputFormat, now });
+  return data.map((item, i) => {
+    if (typeof item.b64_json !== "string") throw new Error("Image response is missing base64 data (b64_json).");
+    const id = store.put(item.b64_json, IMAGE_MIME[outputFormat] ?? "application/octet-stream");
+    return { id, filename: names[i], bytes: Buffer.byteLength(item.b64_json, "base64"), revised_prompt: item.revised_prompt };
+  });
+}
+
+// toFile over a raw ReadStream sends application/octet-stream, which Azure's
+// image edit endpoint rejects; set the mimetype from the file extension.
+export async function toImageFile(p: string) {
+  const ext = path.extname(p).slice(1).toLowerCase();
+  return toFile(fs.createReadStream(p), path.basename(p), { type: IMAGE_MIME[ext] ?? "application/octet-stream" });
+}
+
+const MIME_EXT: Record<string, string> = { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp" };
+
+// Resolve an edit input — a file path OR an in-store image id — into an
+// uploadable file, so generate (no output_dir) → edit works without touching
+// disk. ponytail: a store id wins over a same-named path; ids are server-minted
+// `img-N`, so a real clash needs a file literally named like a live id. Narrow
+// to /^img-\d+$/ if that ever bites.
+async function toInputImageFile(store: ImageStore, ref: string) {
+  const entry = store.get(ref);
+  if (entry) return toFile(Buffer.from(entry.b64, "base64"), `${ref}.${MIME_EXT[entry.mimeType] ?? "png"}`, { type: entry.mimeType });
+  if (!fs.existsSync(ref)) throw new Error(`Input image not found (no saved file or in-app id): ${ref}`);
+  return toImageFile(ref);
+}
+
+export async function edit(client: OpenAI, deployment: string, args: EditArgs, store: ImageStore): Promise<ImageItem[]> {
+  const { prompt, images, mask, size, quality, background, output_format, n, output_compression } = args;
+  assertValidFormat(background, output_format);
+  assertValidSize(size);
+  const image = await Promise.all(images.map((ref) => toInputImageFile(store, ref)));
+  const maskFile = mask ? await toInputImageFile(store, mask) : undefined;
+  // output_format isn't in the SDK's ImageEditParams type but Azure accepts it and
+  // the SDK forwards the body unchanged; an inferred object keeps it while staying typed.
+  // moderation is intentionally not forwarded here: it's a generate-only param.
+  const params = {
+    model: deployment, prompt, image, size, quality, background, output_format, n,
+    ...(output_compression !== undefined ? { output_compression } : {}),
+    ...(maskFile ? { mask: maskFile } : {}),
+  };
+  const resp = await client.images.edit(params);
+  return resp.data ?? [];
+}
+
+export interface StreamFrame {
+  kind: "partial" | "final";
+  index: number;
+  b64: string;
+}
+
+// Streams a single image generation, yielding each partial preview frame as it
+// arrives and finally the completed image. Azure's /openai/v1 surface returns
+// N `image_generation.partial_image` events then one `image_generation.completed`.
+export async function* generateStream(
+  client: OpenAI,
+  deployment: string,
+  args: GenerateArgs & { partial_images: number },
+): AsyncGenerator<StreamFrame> {
+  const { prompt, size, quality, background, output_format, partial_images, moderation, output_compression } = args;
+  assertValidFormat(background, output_format);
+  assertValidSize(size);
+  const stream = await client.images.generate({
+    model: deployment, prompt, size, quality, background, output_format,
+    n: 1, stream: true, partial_images,
+    ...(moderation ? { moderation } : {}),
+    ...(output_compression !== undefined ? { output_compression } : {}),
+  });
+  for await (const ev of stream) {
+    if (ev.type === "image_generation.partial_image") {
+      yield { kind: "partial", index: ev.partial_image_index, b64: ev.b64_json };
+    } else if (ev.type === "image_generation.completed") {
+      yield { kind: "final", index: 0, b64: ev.b64_json };
+    }
+  }
+}
+
+// Streams a single image edit, yielding each partial preview frame then the
+// final edited image (Azure emits `image_edit.partial_image` events then one
+// `image_edit.completed`).
+export async function* editStream(
+  client: OpenAI,
+  deployment: string,
+  args: EditArgs & { partial_images: number },
+  store: ImageStore,
+): AsyncGenerator<StreamFrame> {
+  const { prompt, images, mask, size, quality, background, output_format, partial_images, output_compression } = args;
+  assertValidFormat(background, output_format);
+  assertValidSize(size);
+  const image = await Promise.all(images.map((ref) => toInputImageFile(store, ref)));
+  const maskFile = mask ? await toInputImageFile(store, mask) : undefined;
+  // output_format isn't in the SDK's ImageEditParams type but Azure forwards it;
+  // an inferred variable (not an inline literal) keeps it, while `stream: true as
+  // const` still selects the streaming overload.
+  const params = {
+    model: deployment, prompt, image, size, quality, background, output_format,
+    n: 1, stream: true as const, partial_images,
+    ...(output_compression !== undefined ? { output_compression } : {}),
+    ...(maskFile ? { mask: maskFile } : {}),
+  };
+  const stream = await client.images.edit(params);
+  for await (const ev of stream) {
+    if (ev.type === "image_edit.partial_image") {
+      yield { kind: "partial", index: ev.partial_image_index, b64: ev.b64_json };
+    } else if (ev.type === "image_edit.completed") {
+      yield { kind: "final", index: 0, b64: ev.b64_json };
+    }
+  }
+}
+

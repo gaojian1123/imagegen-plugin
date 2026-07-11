@@ -1,0 +1,15 @@
+{
+  "name": "imagegen",
+  "owner": { "name": "Jian Gao", "email": "gaojian0727@outlook.com" },
+  "metadata": { "description": "Image generation and editing for Copilot CLI.", "version": "0.1.0" },
+  "plugins": [
+    {
+      "name": "imagegen",
+      "description": "Generate and edit images with a gpt-image-2 Azure OpenAI (Foundry) deployment.",
+      "version": "0.1.0",
+      "source": ".",
+      "category": "productivity",
+      "keywords": ["image", "gpt-image", "azure-openai", "mcp"]
+    }
+  ]
+}

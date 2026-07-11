@@ -1,0 +1,4 @@
+# The esbuild bundle is a generated artifact compared byte-for-byte by the CI
+# staleness check. Treat it as binary so git never rewrites its line endings.
+mcp-server/dist/index.js -text
+mcp-server/dist/mcp-app.html -text

@@ -1,0 +1,9 @@
+{
+  "name": "imagegen",
+  "description": "Generate and edit images with a gpt-image-2 Azure OpenAI (Foundry) deployment.",
+  "version": "0.1.0",
+  "author": { "name": "Jian Gao", "email": "gaojian0727@outlook.com" },
+  "license": "MIT",
+  "keywords": ["image", "gpt-image", "azure-openai", "mcp"],
+  "mcpServers": ".mcp.json"
+}
