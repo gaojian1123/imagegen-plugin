@@ -1,4 +1,4 @@
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 import assert from "node:assert/strict";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -14,7 +14,10 @@ test("previewMime maps output formats, falling back to octet-stream", () => {
 });
 
 test("preview resource: listed, notifies only subscribers, read returns latest frame", async () => {
-  const server = new McpServer({ name: "t", version: "0" }, { capabilities: { resources: { subscribe: true } } });
+  const server = new McpServer(
+    { name: "t", version: "0" },
+    { capabilities: { resources: { subscribe: true } } },
+  );
   const preview = attachPreviewResource(server);
   const client = new Client({ name: "c", version: "0" });
   const [clientT, serverT] = InMemoryTransport.createLinkedPair();
@@ -50,7 +53,10 @@ test("preview resource: listed, notifies only subscribers, read returns latest f
 });
 
 test("preview latest() returns the newest frame and reset() clears it", async () => {
-  const server = new McpServer({ name: "t", version: "0" }, { capabilities: { resources: { subscribe: true } } });
+  const server = new McpServer(
+    { name: "t", version: "0" },
+    { capabilities: { resources: { subscribe: true } } },
+  );
   const preview = attachPreviewResource(server);
   const b64 = (s: string) => Buffer.from(s).toString("base64");
 

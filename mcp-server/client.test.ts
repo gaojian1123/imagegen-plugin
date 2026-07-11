@@ -1,4 +1,4 @@
-import { test } from "node:test";
+import { test } from "vite-plus/test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
@@ -100,7 +100,10 @@ test("readImageAsDataUri returns a data URI, but guards extension and existence"
   const png = path.join(dir, "a.png");
   const payload = Buffer.from("png-bytes");
   fs.writeFileSync(png, payload);
-  assert.equal(readImageAsDataUri(png).dataUri, `data:image/png;base64,${payload.toString("base64")}`);
+  assert.equal(
+    readImageAsDataUri(png).dataUri,
+    `data:image/png;base64,${payload.toString("base64")}`,
+  );
 
   // A real but non-image file is rejected (blocks reading e.g. a key file).
   const txt = path.join(dir, "secret.txt");
@@ -116,7 +119,11 @@ test("storeBase64Images keeps bytes in the store and returns handles (no disk wr
   const store = createImageStore();
   const b64 = Buffer.from("img-bytes").toString("base64");
   const now = new Date(2026, 6, 4, 1, 2, 3);
-  const [res] = storeBase64Images(store, [{ b64_json: b64, revised_prompt: "hi" }], { prompt: "a cat", outputFormat: "png", now });
+  const [res] = storeBase64Images(store, [{ b64_json: b64, revised_prompt: "hi" }], {
+    prompt: "a cat",
+    outputFormat: "png",
+    now,
+  });
   assert.equal(res.path, undefined, "no path when not saved to disk");
   assert.equal(res.filename, "a-cat-20260704-010203.png");
   assert.equal(res.revised_prompt, "hi");
@@ -128,10 +135,20 @@ test("storeBase64Images keeps bytes in the store and returns handles (no disk wr
 test("generate forwards params to the SDK and returns data", async () => {
   let captured: Record<string, unknown> = {};
   const fake = {
-    images: { generate: async (p: Record<string, unknown>) => { captured = p; return { data: [{ b64_json: "AA==" }] }; } },
+    images: {
+      generate: async (p: Record<string, unknown>) => {
+        captured = p;
+        return { data: [{ b64_json: "AA==" }] };
+      },
+    },
   } as unknown as OpenAI;
   const data = await generate(fake, "gpt-image-2", {
-    prompt: "cat", size: "1024x1024", quality: "high", background: "auto", output_format: "png", n: 1,
+    prompt: "cat",
+    size: "1024x1024",
+    quality: "high",
+    background: "auto",
+    output_format: "png",
+    n: 1,
   });
   assert.equal(captured.model, "gpt-image-2");
   assert.equal(captured.prompt, "cat");
@@ -142,11 +159,22 @@ test("generate forwards params to the SDK and returns data", async () => {
 test("generate forwards moderation and output_compression only when set", async () => {
   let captured: Record<string, unknown> = {};
   const fake = {
-    images: { generate: async (p: Record<string, unknown>) => { captured = p; return { data: [{ b64_json: "AA==" }] }; } },
+    images: {
+      generate: async (p: Record<string, unknown>) => {
+        captured = p;
+        return { data: [{ b64_json: "AA==" }] };
+      },
+    },
   } as unknown as OpenAI;
   await generate(fake, "gpt-image-2", {
-    prompt: "cat", size: "1536x864", quality: "high", background: "auto", output_format: "webp", n: 1,
-    moderation: "low", output_compression: 50,
+    prompt: "cat",
+    size: "1536x864",
+    quality: "high",
+    background: "auto",
+    output_format: "webp",
+    n: 1,
+    moderation: "low",
+    output_compression: 50,
   });
   assert.equal(captured.size, "1536x864");
   assert.equal(captured.moderation, "low");
@@ -154,7 +182,12 @@ test("generate forwards moderation and output_compression only when set", async 
 
   captured = {};
   await generate(fake, "gpt-image-2", {
-    prompt: "cat", size: "1024x1024", quality: "high", background: "auto", output_format: "png", n: 1,
+    prompt: "cat",
+    size: "1024x1024",
+    quality: "high",
+    background: "auto",
+    output_format: "png",
+    n: 1,
   });
   assert.equal("moderation" in captured, false);
   assert.equal("output_compression" in captured, false);
@@ -166,12 +199,29 @@ test("edit forwards output_compression but never moderation", async () => {
   fs.writeFileSync(imgPath, Buffer.from("fake-png-bytes"));
   let captured: Record<string, unknown> = {};
   const fake = {
-    images: { edit: async (p: Record<string, unknown>) => { captured = p; return { data: [{ b64_json: "AA==" }] }; } },
+    images: {
+      edit: async (p: Record<string, unknown>) => {
+        captured = p;
+        return { data: [{ b64_json: "AA==" }] };
+      },
+    },
   } as unknown as OpenAI;
-  await edit(fake, "gpt-image-2", {
-    prompt: "blue", images: [imgPath], size: "1024x1024", quality: "high", background: "auto", output_format: "webp", n: 1,
-    output_compression: 30, moderation: "low",
-  }, createImageStore());
+  await edit(
+    fake,
+    "gpt-image-2",
+    {
+      prompt: "blue",
+      images: [imgPath],
+      size: "1024x1024",
+      quality: "high",
+      background: "auto",
+      output_format: "webp",
+      n: 1,
+      output_compression: 30,
+      moderation: "low",
+    },
+    createImageStore(),
+  );
   assert.equal(captured.output_compression, 30);
   assert.equal("moderation" in captured, false);
   fs.rmSync(dir, { recursive: true, force: true });
@@ -179,9 +229,23 @@ test("edit forwards output_compression but never moderation", async () => {
 
 test("generate rejects transparent+jpeg before calling the SDK", async () => {
   let called = false;
-  const fake = { images: { generate: async () => { called = true; return { data: [] }; } } } as unknown as OpenAI;
+  const fake = {
+    images: {
+      generate: async () => {
+        called = true;
+        return { data: [] };
+      },
+    },
+  } as unknown as OpenAI;
   await assert.rejects(
-    generate(fake, "d", { prompt: "x", size: "auto", quality: "auto", background: "transparent", output_format: "jpeg", n: 1 }),
+    generate(fake, "d", {
+      prompt: "x",
+      size: "auto",
+      quality: "auto",
+      background: "transparent",
+      output_format: "jpeg",
+      n: 1,
+    }),
     /requires output_format/,
   );
   assert.equal(called, false);
@@ -189,9 +253,29 @@ test("generate rejects transparent+jpeg before calling the SDK", async () => {
 
 test("edit validates input files before calling the SDK", async () => {
   let called = false;
-  const fake = { images: { edit: async () => { called = true; return { data: [] }; } } } as unknown as OpenAI;
+  const fake = {
+    images: {
+      edit: async () => {
+        called = true;
+        return { data: [] };
+      },
+    },
+  } as unknown as OpenAI;
   await assert.rejects(
-    edit(fake, "d", { prompt: "x", images: ["/no/such.png"], size: "auto", quality: "auto", background: "auto", output_format: "png", n: 1 }, createImageStore()),
+    edit(
+      fake,
+      "d",
+      {
+        prompt: "x",
+        images: ["/no/such.png"],
+        size: "auto",
+        quality: "auto",
+        background: "auto",
+        output_format: "png",
+        n: 1,
+      },
+      createImageStore(),
+    ),
     /Input image not found/,
   );
   assert.equal(called, false);
@@ -202,9 +286,27 @@ test("edit resolves an in-store image id without reading disk", async () => {
   const id = store.put(Buffer.from("stored-bytes").toString("base64"), "image/png");
   let captured: Record<string, unknown> = {};
   const fake = {
-    images: { edit: async (p: Record<string, unknown>) => { captured = p; return { data: [{ b64_json: "AA==" }] }; } },
+    images: {
+      edit: async (p: Record<string, unknown>) => {
+        captured = p;
+        return { data: [{ b64_json: "AA==" }] };
+      },
+    },
   } as unknown as OpenAI;
-  await edit(fake, "d", { prompt: "add snow", images: [id], size: "auto", quality: "auto", background: "auto", output_format: "png", n: 1 }, store);
+  await edit(
+    fake,
+    "d",
+    {
+      prompt: "add snow",
+      images: [id],
+      size: "auto",
+      quality: "auto",
+      background: "auto",
+      output_format: "png",
+      n: 1,
+    },
+    store,
+  );
   const files = captured.image as Array<{ type?: string; name?: string }>;
   assert.equal(files.length, 1);
   assert.equal(files[0].type, "image/png");
@@ -227,14 +329,18 @@ test("clientOptions falls back to an Entra token provider when no key is set", (
 });
 
 test("clientOptions ignores a placeholder key and uses Entra instead", () => {
-  const o = clientOptions({ AZURE_OPENAI_ENDPOINT: "https://x.openai.azure.com/openai/v1", AZURE_OPENAI_API_KEY: "${AZURE_OPENAI_API_KEY}" });
+  const o = clientOptions({
+    AZURE_OPENAI_ENDPOINT: "https://x.openai.azure.com/openai/v1",
+    AZURE_OPENAI_API_KEY: "${AZURE_OPENAI_API_KEY}",
+  });
   assert.equal(typeof o.apiKey, "function");
 });
 
 test("saveBase64Images throws when b64_json is missing", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "imgtest-"));
   assert.throws(
-    () => saveBase64Images([{}], { outputDir: dir, prompt: "x", outputFormat: "png", now: new Date() }),
+    () =>
+      saveBase64Images([{}], { outputDir: dir, prompt: "x", outputFormat: "png", now: new Date() }),
     /missing base64/,
   );
   fs.rmSync(dir, { recursive: true, force: true });
@@ -271,9 +377,20 @@ test("generateStream sets stream params and translates events to frames", async 
     },
   } as unknown as OpenAI;
   const frames = [];
-  for await (const f of generateStream(fake, "gpt-image-2", {
-    prompt: "cat", size: "1024x1024", quality: "low", background: "auto", output_format: "png", n: 1, partial_images: 2,
-  }, controller.signal)) {
+  for await (const f of generateStream(
+    fake,
+    "gpt-image-2",
+    {
+      prompt: "cat",
+      size: "1024x1024",
+      quality: "low",
+      background: "auto",
+      output_format: "png",
+      n: 1,
+      partial_images: 2,
+    },
+    controller.signal,
+  )) {
     frames.push(f);
   }
   assert.equal(captured.stream, true);
@@ -310,9 +427,22 @@ test("editStream loads files, sets stream params, and translates edit events", a
     },
   } as unknown as OpenAI;
   const frames = [];
-  for await (const f of editStream(fake, "gpt-image-2", {
-    prompt: "make it blue", images: [imgPath], size: "1024x1024", quality: "low", background: "auto", output_format: "png", n: 1, partial_images: 1,
-  }, createImageStore(), controller.signal)) {
+  for await (const f of editStream(
+    fake,
+    "gpt-image-2",
+    {
+      prompt: "make it blue",
+      images: [imgPath],
+      size: "1024x1024",
+      quality: "low",
+      background: "auto",
+      output_format: "png",
+      n: 1,
+      partial_images: 1,
+    },
+    createImageStore(),
+    controller.signal,
+  )) {
     frames.push(f);
   }
   assert.equal(captured.stream, true);

@@ -1,7 +1,12 @@
 import fs from "node:fs";
 import path from "node:path";
 import { OpenAI, toFile } from "openai";
-import { DefaultAzureCredential, InteractiveBrowserCredential, ChainedTokenCredential, getBearerTokenProvider } from "@azure/identity";
+import {
+  DefaultAzureCredential,
+  InteractiveBrowserCredential,
+  ChainedTokenCredential,
+  getBearerTokenProvider,
+} from "@azure/identity";
 import type { ImageStore } from "./store.ts";
 
 // gpt-image-2 accepts arbitrary WIDTHxHEIGHT sizes, so Size is any string; the
@@ -75,7 +80,9 @@ export function required(env: Env, name: string): string {
   const v = env[name];
   if (!v || !String(v).trim()) throw new Error(`Missing required env var: ${name}`);
   if (isPlaceholder(v)) {
-    throw new Error(`Env var ${name} is an unexpanded placeholder (${v}); set it in your environment.`);
+    throw new Error(
+      `Env var ${name} is an unexpanded placeholder (${v}); set it in your environment.`,
+    );
   }
   return v;
 }
@@ -100,7 +107,10 @@ export function clientOptions(env: Env = process.env): ClientOptions {
   // target your own app registration; otherwise a built-in Azure dev app is used.
   const credential = new ChainedTokenCredential(
     new DefaultAzureCredential(),
-    new InteractiveBrowserCredential({ tenantId: env.AZURE_TENANT_ID, clientId: env.AZURE_CLIENT_ID }),
+    new InteractiveBrowserCredential({
+      tenantId: env.AZURE_TENANT_ID,
+      clientId: env.AZURE_CLIENT_ID,
+    }),
   );
   return { baseURL: endpoint, apiKey: getBearerTokenProvider(credential, ENTRA_SCOPE) };
 }
@@ -122,20 +132,29 @@ export function assertValidFormat(background: string, outputFormat: string): voi
 export function assertValidSize(size: string): void {
   if (size === "auto") return;
   const m = /^(\d+)x(\d+)$/.exec(size);
-  if (!m) throw new Error(`Invalid size '${size}': use 'auto' or a WIDTHxHEIGHT string like '1536x864'.`);
+  if (!m)
+    throw new Error(`Invalid size '${size}': use 'auto' or a WIDTHxHEIGHT string like '1536x864'.`);
   const w = Number(m[1]);
   const h = Number(m[2]);
-  if (w % 16 !== 0 || h % 16 !== 0) throw new Error(`Invalid size ${w}x${h}: width and height must both be multiples of 16.`);
-  if (Math.max(w, h) > 3840) throw new Error(`Invalid size ${w}x${h}: the longest edge must be 3840px or less.`);
-  if (Math.max(w, h) / Math.min(w, h) > 3) throw new Error(`Invalid size ${w}x${h}: the long-to-short edge ratio must not exceed 3:1.`);
+  if (w % 16 !== 0 || h % 16 !== 0)
+    throw new Error(`Invalid size ${w}x${h}: width and height must both be multiples of 16.`);
+  if (Math.max(w, h) > 3840)
+    throw new Error(`Invalid size ${w}x${h}: the longest edge must be 3840px or less.`);
+  if (Math.max(w, h) / Math.min(w, h) > 3)
+    throw new Error(`Invalid size ${w}x${h}: the long-to-short edge ratio must not exceed 3:1.`);
   const pixels = w * h;
-  if (pixels < 655360 || pixels > 8294400) throw new Error(`Invalid size ${w}x${h}: total pixels must be between 655,360 and 8,294,400.`);
+  if (pixels < 655360 || pixels > 8294400)
+    throw new Error(`Invalid size ${w}x${h}: total pixels must be between 655,360 and 8,294,400.`);
 }
 
 const EXT: Record<string, string> = { png: "png", jpeg: "jpg", webp: "webp" };
 
 export function slugify(text: string): string {
-  const s = String(text).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40);
+  const s = String(text)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 40);
   return s || "image";
 }
 
@@ -152,9 +171,17 @@ export interface ResolveFilenamesArgs {
   now: Date;
 }
 
-export function resolveFilenames({ filename, prompt, count, outputFormat, now }: ResolveFilenamesArgs): string[] {
+export function resolveFilenames({
+  filename,
+  prompt,
+  count,
+  outputFormat,
+  now,
+}: ResolveFilenamesArgs): string[] {
   const ext = EXT[outputFormat] ?? outputFormat;
-  const base = filename ? filename.replace(/\.[^.]+$/, "") : `${slugify(prompt ?? "")}-${timestamp(now)}`;
+  const base = filename
+    ? filename.replace(/\.[^.]+$/, "")
+    : `${slugify(prompt ?? "")}-${timestamp(now)}`;
   if (count === 1) return [`${base}.${ext}`];
   return Array.from({ length: count }, (_, i) => `${base}-${i + 1}.${ext}`);
 }
@@ -167,7 +194,11 @@ export interface SaveArgs {
   now?: Date;
 }
 
-export function writeB64(b64: string | undefined, fullPath: string, revised_prompt?: string): SavedImage {
+export function writeB64(
+  b64: string | undefined,
+  fullPath: string,
+  revised_prompt?: string,
+): SavedImage {
   if (typeof b64 !== "string") {
     throw new Error("Image response is missing base64 data (b64_json).");
   }
@@ -177,20 +208,36 @@ export function writeB64(b64: string | undefined, fullPath: string, revised_prom
   return { path: fullPath, bytes: buf.length, revised_prompt };
 }
 
-export function saveBase64Images(data: ImageItem[], { outputDir, filename, prompt, outputFormat, now = new Date() }: SaveArgs): SavedImage[] {
+export function saveBase64Images(
+  data: ImageItem[],
+  { outputDir, filename, prompt, outputFormat, now = new Date() }: SaveArgs,
+): SavedImage[] {
   fs.mkdirSync(outputDir, { recursive: true });
   const names = resolveFilenames({ filename, prompt, count: data.length, outputFormat, now });
-  return data.map((item, i) => writeB64(item.b64_json, path.join(outputDir, names[i]), item.revised_prompt));
+  return data.map((item, i) =>
+    writeB64(item.b64_json, path.join(outputDir, names[i]), item.revised_prompt),
+  );
 }
 
-export async function generate(client: OpenAI, deployment: string, args: GenerateArgs): Promise<ImageItem[]> {
-  const { prompt, size, quality, background, output_format, n, moderation, output_compression } = args;
+export async function generate(
+  client: OpenAI,
+  deployment: string,
+  args: GenerateArgs,
+): Promise<ImageItem[]> {
+  const { prompt, size, quality, background, output_format, n, moderation, output_compression } =
+    args;
   assertValidFormat(background, output_format);
   assertValidSize(size);
   // output_compression is webp/jpeg-only, so forward it only when set rather
   // than sending a default that would error on png.
   const body = {
-    model: deployment, prompt, size, quality, background, output_format, n,
+    model: deployment,
+    prompt,
+    size,
+    quality,
+    background,
+    output_format,
+    n,
     ...(moderation ? { moderation } : {}),
     ...(output_compression !== undefined ? { output_compression } : {}),
   };
@@ -199,7 +246,12 @@ export async function generate(client: OpenAI, deployment: string, args: Generat
   return (resp as { data?: ImageItem[] }).data ?? [];
 }
 
-const IMAGE_MIME: Record<string, string> = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", webp: "image/webp" };
+const IMAGE_MIME: Record<string, string> = {
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  webp: "image/webp",
+};
 
 // Read a saved image file into a data: URI for the App UI to render/download.
 // The path is UI-controlled, so guard it: image extension allowlist + must
@@ -218,12 +270,22 @@ export function readImageAsDataUri(p: string): { dataUri: string } {
 // The no-output_dir counterpart to saveBase64Images: instead of writing files,
 // keep each image's bytes in the store and return handles (id + the filename it
 // would have had). The App UI fetches the bytes via read_image({ id }).
-export function storeBase64Images(store: ImageStore, data: ImageItem[], { filename, prompt, outputFormat, now = new Date() }: Omit<SaveArgs, "outputDir">): ImageResult[] {
+export function storeBase64Images(
+  store: ImageStore,
+  data: ImageItem[],
+  { filename, prompt, outputFormat, now = new Date() }: Omit<SaveArgs, "outputDir">,
+): ImageResult[] {
   const names = resolveFilenames({ filename, prompt, count: data.length, outputFormat, now });
   return data.map((item, i) => {
-    if (typeof item.b64_json !== "string") throw new Error("Image response is missing base64 data (b64_json).");
+    if (typeof item.b64_json !== "string")
+      throw new Error("Image response is missing base64 data (b64_json).");
     const id = store.put(item.b64_json, IMAGE_MIME[outputFormat] ?? "application/octet-stream");
-    return { id, filename: names[i], bytes: Buffer.byteLength(item.b64_json, "base64"), revised_prompt: item.revised_prompt };
+    return {
+      id,
+      filename: names[i],
+      bytes: Buffer.byteLength(item.b64_json, "base64"),
+      revised_prompt: item.revised_prompt,
+    };
   });
 }
 
@@ -231,10 +293,16 @@ export function storeBase64Images(store: ImageStore, data: ImageItem[], { filena
 // image edit endpoint rejects; set the mimetype from the file extension.
 export async function toImageFile(p: string) {
   const ext = path.extname(p).slice(1).toLowerCase();
-  return toFile(fs.createReadStream(p), path.basename(p), { type: IMAGE_MIME[ext] ?? "application/octet-stream" });
+  return toFile(fs.createReadStream(p), path.basename(p), {
+    type: IMAGE_MIME[ext] ?? "application/octet-stream",
+  });
 }
 
-const MIME_EXT: Record<string, string> = { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp" };
+const MIME_EXT: Record<string, string> = {
+  "image/png": "png",
+  "image/jpeg": "jpg",
+  "image/webp": "webp",
+};
 
 // Resolve an edit input — a file path OR an in-store image id — into an
 // uploadable file, so generate (no output_dir) → edit works without touching
@@ -243,13 +311,23 @@ const MIME_EXT: Record<string, string> = { "image/png": "png", "image/jpeg": "jp
 // to /^img-\d+$/ if that ever bites.
 async function toInputImageFile(store: ImageStore, ref: string) {
   const entry = store.get(ref);
-  if (entry) return toFile(Buffer.from(entry.b64, "base64"), `${ref}.${MIME_EXT[entry.mimeType] ?? "png"}`, { type: entry.mimeType });
-  if (!fs.existsSync(ref)) throw new Error(`Input image not found (no saved file or in-app id): ${ref}`);
+  if (entry)
+    return toFile(Buffer.from(entry.b64, "base64"), `${ref}.${MIME_EXT[entry.mimeType] ?? "png"}`, {
+      type: entry.mimeType,
+    });
+  if (!fs.existsSync(ref))
+    throw new Error(`Input image not found (no saved file or in-app id): ${ref}`);
   return toImageFile(ref);
 }
 
-export async function edit(client: OpenAI, deployment: string, args: EditArgs, store: ImageStore): Promise<ImageItem[]> {
-  const { prompt, images, mask, size, quality, background, output_format, n, output_compression } = args;
+export async function edit(
+  client: OpenAI,
+  deployment: string,
+  args: EditArgs,
+  store: ImageStore,
+): Promise<ImageItem[]> {
+  const { prompt, images, mask, size, quality, background, output_format, n, output_compression } =
+    args;
   assertValidFormat(background, output_format);
   assertValidSize(size);
   const image = await Promise.all(images.map((ref) => toInputImageFile(store, ref)));
@@ -258,7 +336,14 @@ export async function edit(client: OpenAI, deployment: string, args: EditArgs, s
   // the SDK forwards the body unchanged; an inferred object keeps it while staying typed.
   // moderation is intentionally not forwarded here: it's a generate-only param.
   const params = {
-    model: deployment, prompt, image, size, quality, background, output_format, n,
+    model: deployment,
+    prompt,
+    image,
+    size,
+    quality,
+    background,
+    output_format,
+    n,
     ...(output_compression !== undefined ? { output_compression } : {}),
     ...(maskFile ? { mask: maskFile } : {}),
   };
@@ -281,13 +366,29 @@ export async function* generateStream(
   args: GenerateArgs & { partial_images: number },
   signal?: AbortSignal,
 ): AsyncGenerator<StreamFrame> {
-  const { prompt, size, quality, background, output_format, partial_images, moderation, output_compression } = args;
+  const {
+    prompt,
+    size,
+    quality,
+    background,
+    output_format,
+    partial_images,
+    moderation,
+    output_compression,
+  } = args;
   assertValidFormat(background, output_format);
   assertValidSize(size);
   const stream = await client.images.generate(
     {
-      model: deployment, prompt, size, quality, background, output_format,
-      n: 1, stream: true, partial_images,
+      model: deployment,
+      prompt,
+      size,
+      quality,
+      background,
+      output_format,
+      n: 1,
+      stream: true,
+      partial_images,
       ...(moderation ? { moderation } : {}),
       ...(output_compression !== undefined ? { output_compression } : {}),
     },
@@ -312,7 +413,17 @@ export async function* editStream(
   store: ImageStore,
   signal?: AbortSignal,
 ): AsyncGenerator<StreamFrame> {
-  const { prompt, images, mask, size, quality, background, output_format, partial_images, output_compression } = args;
+  const {
+    prompt,
+    images,
+    mask,
+    size,
+    quality,
+    background,
+    output_format,
+    partial_images,
+    output_compression,
+  } = args;
   assertValidFormat(background, output_format);
   assertValidSize(size);
   const image = await Promise.all(images.map((ref) => toInputImageFile(store, ref)));
@@ -321,8 +432,16 @@ export async function* editStream(
   // an inferred variable (not an inline literal) keeps it, while `stream: true as
   // const` still selects the streaming overload.
   const params = {
-    model: deployment, prompt, image, size, quality, background, output_format,
-    n: 1, stream: true as const, partial_images,
+    model: deployment,
+    prompt,
+    image,
+    size,
+    quality,
+    background,
+    output_format,
+    n: 1,
+    stream: true as const,
+    partial_images,
     ...(output_compression !== undefined ? { output_compression } : {}),
     ...(maskFile ? { mask: maskFile } : {}),
   };

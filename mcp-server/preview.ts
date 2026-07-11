@@ -1,5 +1,8 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { SubscribeRequestSchema, UnsubscribeRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import {
+  SubscribeRequestSchema,
+  UnsubscribeRequestSchema,
+} from "@modelcontextprotocol/sdk/types.js";
 
 // A single stable MCP resource that mirrors the latest streamed image frame.
 // A client that supports resource subscriptions can subscribe once to
@@ -43,7 +46,9 @@ export function attachPreviewResource(server: McpServer): PreviewResource {
       description:
         "The latest frame from the most recent generate/edit call with partial_images > 0. The final frame remains available until the next streamed call starts. Subscribe to receive resources/updated as each frame arrives, then re-read to render it.",
     },
-    () => ({ contents: frame ? [{ uri: PREVIEW_URI, mimeType: frame.mimeType, blob: frame.blob }] : [] }),
+    () => ({
+      contents: frame ? [{ uri: PREVIEW_URI, mimeType: frame.mimeType, blob: frame.blob }] : [],
+    }),
   );
 
   // McpServer registers resource read/list handlers but not subscribe/

@@ -69,14 +69,16 @@ async function downloadImage(item: ShownImage, button: HTMLButtonElement): Promi
   button.disabled = true;
   try {
     const result = await app.downloadFile({
-      contents: [{
-        type: "resource",
-        resource: {
-          uri: `file:///${encodeURIComponent(item.filename)}`,
-          mimeType: match[1],
-          blob: match[2],
+      contents: [
+        {
+          type: "resource",
+          resource: {
+            uri: `file:///${encodeURIComponent(item.filename)}`,
+            mimeType: match[1],
+            blob: match[2],
+          },
         },
-      }],
+      ],
     });
     setStatus(result.isError ? "Save cancelled." : "");
   } catch (error) {
@@ -179,7 +181,13 @@ app.ontoolresult = async (result) => {
     try {
       const r = await app.callServerTool({ name: "read_image", arguments: arg });
       const d = dataUriOf(r);
-      if (d) resolved.push({ dataUri: d, filename: im.filename ?? (im.path ? basename(im.path) : "image"), path: im.path, revised_prompt: im.revised_prompt });
+      if (d)
+        resolved.push({
+          dataUri: d,
+          filename: im.filename ?? (im.path ? basename(im.path) : "image"),
+          path: im.path,
+          revised_prompt: im.revised_prompt,
+        });
     } catch {
       // skip an image the UI can't read; others still render
     }
@@ -211,9 +219,12 @@ function applyHostContext(ctx: McpUiHostContext | undefined): void {
 app.onhostcontextchanged = applyHostContext;
 
 setStatus("Waiting for image…");
-void app.connect()
+void app
+  .connect()
   .then(() => applyHostContext(app.getHostContext()))
   .catch((error: unknown) => {
     console.error(error);
-    setStatus(`Unable to connect to host: ${error instanceof Error ? error.message : String(error)}`);
+    setStatus(
+      `Unable to connect to host: ${error instanceof Error ? error.message : String(error)}`,
+    );
   });

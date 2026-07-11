@@ -1,7 +1,10 @@
 {
   "name": "imagegen",
   "owner": { "name": "Jian Gao", "email": "gaojian0727@outlook.com" },
-  "metadata": { "description": "Image generation and editing for Copilot CLI.", "version": "0.1.0" },
+  "metadata": {
+    "description": "Image generation and editing for Copilot CLI.",
+    "version": "0.1.0"
+  },
   "plugins": [
     {
       "name": "imagegen",

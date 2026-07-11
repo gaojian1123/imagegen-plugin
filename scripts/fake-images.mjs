@@ -46,7 +46,12 @@ function png(width, height, rgb) {
     }
   }
   const sig = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
-  return Buffer.concat([sig, chunk("IHDR", ihdr), chunk("IDAT", zlib.deflateSync(raw)), chunk("IEND", Buffer.alloc(0))]).toString("base64");
+  return Buffer.concat([
+    sig,
+    chunk("IHDR", ihdr),
+    chunk("IDAT", zlib.deflateSync(raw)),
+    chunk("IEND", Buffer.alloc(0)),
+  ]).toString("base64");
 }
 
 // A frame that resolves left-to-right as fraction (0..1) grows; the pending area
@@ -66,7 +71,11 @@ const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 async function* fakeStream(total, kind, stepMs) {
   for (let i = 0; i < total - 1; i++) {
     await delay(stepMs);
-    yield { type: `image_${kind}.partial_image`, partial_image_index: i, b64_json: frame((i + 1) / total, i) };
+    yield {
+      type: `image_${kind}.partial_image`,
+      partial_image_index: i,
+      b64_json: frame((i + 1) / total, i),
+    };
   }
   await delay(stepMs);
   yield { type: `image_${kind}.completed`, b64_json: frame(1, 99) };
@@ -80,7 +89,12 @@ export function createFakeClient(stepMs = 450) {
       async generate(body) {
         if (body.stream) return fakeStream((body.partial_images ?? 0) + 1, "generation", stepMs);
         const n = body.n ?? 1;
-        return { data: Array.from({ length: n }, (_, i) => ({ b64_json: frame(1, i), revised_prompt: `fake: ${body.prompt}` })) };
+        return {
+          data: Array.from({ length: n }, (_, i) => ({
+            b64_json: frame(1, i),
+            revised_prompt: `fake: ${body.prompt}`,
+          })),
+        };
       },
       async edit(params) {
         if (params.stream) return fakeStream((params.partial_images ?? 0) + 1, "edit", stepMs);
