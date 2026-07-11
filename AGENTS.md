@@ -13,6 +13,9 @@
 - **Tests:** `vp test` runs the Vitest suite through Vite+. No network calls in
   tests; inject a fake client (cast `as unknown as OpenAI`) for the SDK wrappers.
   Add a test for any non-trivial logic.
+- **Commit hook:** `vp config --no-agent` installs `.vite-hooks/pre-commit`.
+  `vp staged` checks staged files and rebuilds/stages `mcp-server/dist` when a
+  build input changes.
 - **Dependencies:** runtime deps are `openai`, `@modelcontextprotocol/sdk`,
   `zod`, `@azure/identity` (keyless Entra ID auth), and
   `@modelcontextprotocol/ext-apps` (MCP Apps UI helpers, used server- and

@@ -93,6 +93,7 @@ bundled by Vite (`vite-plugin-singlefile`) into the self-contained
 
 ```shell
 vp install
+vp config --no-agent # install the Vite+ pre-commit hook
 vp check           # format, lint, and fast type-check
 vp run typecheck   # full tsc check
 vp test            # unit tests (no network)

@@ -9,6 +9,7 @@ import path from "node:path";
 // bundle (dist/index.js), which the server reads at runtime.
 const uiDir = fileURLToPath(new URL("./mcp-server/ui", import.meta.url));
 const outDir = fileURLToPath(new URL("./mcp-server/dist", import.meta.url));
+const projectDir = fileURLToPath(new URL(".", import.meta.url));
 
 export default defineConfig({
   fmt: { ignorePatterns: ["mcp-server/dist/**"] },
@@ -17,6 +18,15 @@ export default defineConfig({
     jsPlugins: [{ name: "vite-plus", specifier: "vite-plus/oxlint-plugin" }],
     rules: { "vite-plus/prefer-vite-plus-imports": "error" },
     options: { typeAware: true, typeCheck: true },
+  },
+  staged: (files) => {
+    const changed = files.map((file) => path.relative(projectDir, file).replaceAll("\\", "/"));
+    const rebuild = changed.some(
+      (file) =>
+        (file.startsWith("mcp-server/") && !file.startsWith("mcp-server/dist/")) ||
+        ["vite.config.ts", "package.json", "package-lock.json", "tsconfig.json"].includes(file),
+    );
+    return ["vp check --fix", ...(rebuild ? ["vp run build", "git add mcp-server/dist"] : [])];
   },
   root: uiDir,
   plugins: lazyPlugins(() => [viteSingleFile()]),
@@ -34,7 +44,7 @@ export default defineConfig({
     outputOptions: { codeSplitting: false },
   },
   test: {
-    root: fileURLToPath(new URL(".", import.meta.url)),
+    root: projectDir,
     include: ["mcp-server/**/*.test.ts"],
   },
 });
