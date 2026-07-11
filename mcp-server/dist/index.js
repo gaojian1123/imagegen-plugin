@@ -38708,7 +38708,7 @@ async function edit(client, deployment, args, store) {
 	};
 	return (await client.images.edit(params)).data ?? [];
 }
-async function* generateStream(client, deployment, args) {
+async function* generateStream(client, deployment, args, signal) {
 	const { prompt, size, quality, background, output_format, partial_images, moderation, output_compression } = args;
 	assertValidFormat(background, output_format);
 	assertValidSize(size);
@@ -38724,7 +38724,7 @@ async function* generateStream(client, deployment, args) {
 		partial_images,
 		...moderation ? { moderation } : {},
 		...output_compression !== void 0 ? { output_compression } : {}
-	});
+	}, { signal });
 	for await (const ev of stream) if (ev.type === "image_generation.partial_image") yield {
 		kind: "partial",
 		index: ev.partial_image_index,
@@ -38736,7 +38736,7 @@ async function* generateStream(client, deployment, args) {
 		b64: ev.b64_json
 	};
 }
-async function* editStream(client, deployment, args, store) {
+async function* editStream(client, deployment, args, store, signal) {
 	const { prompt, images, mask, size, quality, background, output_format, partial_images, output_compression } = args;
 	assertValidFormat(background, output_format);
 	assertValidSize(size);
@@ -38756,7 +38756,7 @@ async function* editStream(client, deployment, args, store) {
 		...output_compression !== void 0 ? { output_compression } : {},
 		...maskFile ? { mask: maskFile } : {}
 	};
-	const stream = await client.images.edit(params);
+	const stream = await client.images.edit(params, { signal });
 	for await (const ev of stream) if (ev.type === "image_edit.partial_image") yield {
 		kind: "partial",
 		index: ev.partial_image_index,
@@ -52446,8 +52446,7 @@ function attachPreviewResource(server) {
 	const subscribers = /* @__PURE__ */ new Set();
 	server.registerResource("live-preview", PREVIEW_URI, {
 		title: "Live generation preview",
-		description: "The latest streamed frame of the in-progress image. Populated only while a generate/edit call runs with partial_images > 0. Subscribe to receive resources/updated as each frame arrives, then re-read to render it.",
-		mimeType: "image/png"
+		description: "The latest frame from the most recent generate/edit call with partial_images > 0. The final frame remains available until the next streamed call starts. Subscribe to receive resources/updated as each frame arrives, then re-read to render it."
 	}, () => ({ contents: frame ? [{
 		uri: PREVIEW_URI,
 		mimeType: frame.mimeType,
@@ -52498,19 +52497,18 @@ function createImageStore(cap = 24) {
 	};
 }
 //#endregion
-//#region mcp-server/server.ts
+//#region mcp-server/registration.ts
 const UI_URI = "ui://imagegen/app.html";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const uiHtmlPath = import.meta.url.endsWith(".ts") ? path.join(here, "dist", "mcp-app.html") : path.join(here, "mcp-app.html");
 let uiHtml;
-function buildServer(client, deployment) {
-	const server = new McpServer({
-		name: "imagegen",
-		version: "0.1.0"
-	}, { capabilities: { resources: { subscribe: true } } });
+function registerImagegen(server, client, deployment) {
 	const previewResource = attachPreviewResource(server);
 	const store = createImageStore();
-	N3(server, "Imagegen UI", UI_URI, { description: "Interactive image viewer: shows generated/edited images, a save button, and live streamed partials." }, () => {
+	N3(server, "Imagegen UI", UI_URI, {
+		title: "Imagegen image viewer",
+		description: "Interactive image viewer: shows generated/edited images, a save button, and live streamed partials."
+	}, () => {
 		uiHtml ??= fs.readFileSync(uiHtmlPath, "utf8");
 		return { contents: [{
 			uri: UI_URI,
@@ -52535,7 +52533,7 @@ function buildServer(client, deployment) {
 			"png",
 			"jpeg",
 			"webp"
-		]).default("png").describe("Saved image file format."),
+		]).default("png").describe("Output image format."),
 		output_compression: numberType().int().min(0).max(100).optional().describe("Compression level 0-100 for webp/jpeg output (GPT image models only; not valid with png)."),
 		n: numberType().int().min(1).max(10).default(1).describe("How many images to generate (max 10)."),
 		output_dir: stringType().optional().describe("Directory to write image files to. Omit to keep the image only in the app (view and Save it there) without writing any file to disk."),
@@ -52609,7 +52607,7 @@ function buildServer(client, deployment) {
 			const total = args.partial_images + 1;
 			const token = extra?._meta?.progressToken;
 			let final;
-			for await (const frame of source(client, deployment)) {
+			for await (const frame of source(client, deployment, extra.signal)) {
 				await previewResource.update(frame.b64, previewMime(args.output_format));
 				if (frame.kind === "final") if (saveDir) {
 					const s = writeB64(frame.b64, path.join(saveDir, finalName));
@@ -52657,7 +52655,7 @@ function buildServer(client, deployment) {
 	}
 	K3(server, "generate_image", {
 		title: "Generate image",
-		description: "Generate an image from a text prompt. Saves the image to disk and returns the file path.",
+		description: "Generate images from a text prompt. Keeps them in the app by default; pass output_dir to also save files to disk.",
 		inputSchema: {
 			prompt: stringType().min(1).describe("What to generate."),
 			...common,
@@ -52666,10 +52664,10 @@ function buildServer(client, deployment) {
 		},
 		outputSchema,
 		_meta: { ui: { resourceUri: UI_URI } }
-	}, (args, extra) => args.partial_images > 0 ? runStream(args, extra, (client, deployment) => generateStream(client, deployment, args)) : run(args, (client, deployment) => generate(client, deployment, args)));
+	}, (args, extra) => args.partial_images > 0 ? runStream(args, extra, (client, deployment, signal) => generateStream(client, deployment, args, signal)) : run(args, (client, deployment) => generate(client, deployment, args)));
 	K3(server, "edit_image", {
 		title: "Edit image",
-		description: "Edit or inpaint one or more existing images with a text prompt. Saves the result to disk and returns the file path.",
+		description: "Edit or inpaint one or more existing images with a text prompt. Keeps results in the app by default; pass output_dir to also save files to disk.",
 		inputSchema: {
 			prompt: stringType().min(1).describe("How to edit the image(s)."),
 			images: arrayType(stringType()).min(1).describe("Input images: file paths, or in-app image ids returned by a previous generate/edit that wasn't saved to disk."),
@@ -52679,7 +52677,7 @@ function buildServer(client, deployment) {
 		},
 		outputSchema,
 		_meta: { ui: { resourceUri: UI_URI } }
-	}, (args, extra) => args.partial_images > 0 ? runStream(args, extra, (client, deployment) => editStream(client, deployment, args, store)) : run(args, (client, deployment) => edit(client, deployment, args, store)));
+	}, (args, extra) => args.partial_images > 0 ? runStream(args, extra, (client, deployment, signal) => editStream(client, deployment, args, store, signal)) : run(args, (client, deployment) => edit(client, deployment, args, store)));
 	K3(server, "read_image", {
 		title: "Read image (UI)",
 		description: "Return an image as a data URI for the UI: by `path` (saved file), by `id` (in-app image), or the latest streamed partial when neither is given.",
@@ -52691,6 +52689,10 @@ function buildServer(client, deployment) {
 			dataUri: stringType().optional(),
 			path: stringType().optional(),
 			id: stringType().optional()
+		},
+		annotations: {
+			readOnlyHint: true,
+			destructiveHint: false
 		},
 		_meta: { ui: {
 			resourceUri: UI_URI,
@@ -52745,6 +52747,15 @@ function buildServer(client, deployment) {
 			};
 		}
 	});
+}
+//#endregion
+//#region mcp-server/server.ts
+function buildServer(client, deployment) {
+	const server = new McpServer({
+		name: "imagegen",
+		version: "0.1.0"
+	}, { capabilities: { resources: { subscribe: true } } });
+	registerImagegen(server, client, deployment);
 	return server;
 }
 //#endregion

@@ -364,6 +364,7 @@ export async function* generateStream(
   client: OpenAI,
   deployment: string,
   args: GenerateArgs & { partial_images: number },
+  signal?: AbortSignal,
 ): AsyncGenerator<StreamFrame> {
   const {
     prompt,
@@ -377,19 +378,22 @@ export async function* generateStream(
   } = args;
   assertValidFormat(background, output_format);
   assertValidSize(size);
-  const stream = await client.images.generate({
-    model: deployment,
-    prompt,
-    size,
-    quality,
-    background,
-    output_format,
-    n: 1,
-    stream: true,
-    partial_images,
-    ...(moderation ? { moderation } : {}),
-    ...(output_compression !== undefined ? { output_compression } : {}),
-  });
+  const stream = await client.images.generate(
+    {
+      model: deployment,
+      prompt,
+      size,
+      quality,
+      background,
+      output_format,
+      n: 1,
+      stream: true,
+      partial_images,
+      ...(moderation ? { moderation } : {}),
+      ...(output_compression !== undefined ? { output_compression } : {}),
+    },
+    { signal },
+  );
   for await (const ev of stream) {
     if (ev.type === "image_generation.partial_image") {
       yield { kind: "partial", index: ev.partial_image_index, b64: ev.b64_json };
@@ -407,6 +411,7 @@ export async function* editStream(
   deployment: string,
   args: EditArgs & { partial_images: number },
   store: ImageStore,
+  signal?: AbortSignal,
 ): AsyncGenerator<StreamFrame> {
   const {
     prompt,
@@ -440,7 +445,7 @@ export async function* editStream(
     ...(output_compression !== undefined ? { output_compression } : {}),
     ...(maskFile ? { mask: maskFile } : {}),
   };
-  const stream = await client.images.edit(params);
+  const stream = await client.images.edit(params, { signal });
   for await (const ev of stream) {
     if (ev.type === "image_edit.partial_image") {
       yield { kind: "partial", index: ev.partial_image_index, b64: ev.b64_json };
