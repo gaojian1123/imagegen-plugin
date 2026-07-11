@@ -23,39 +23,40 @@ streamed frames are never written to disk.
 
 ## Configure
 
-Copilot passes only `PATH` through to a local MCP server, so the plugin's
-`.mcp.json` forwards the settings below into the server using `${VAR}` expansion.
-That means you just set them **once in your own environment** — no secrets are
-stored in the plugin.
+Ask Copilot to "Configure imagegen", or open the native MCP editor directly:
 
-| Variable                        | Required | Purpose                                                               |
-| ------------------------------- | -------- | --------------------------------------------------------------------- |
-| `AZURE_OPENAI_ENDPOINT`         | yes      | Full v1 base URL, e.g. `https://my-res.openai.azure.com/openai/v1`    |
-| `AZURE_OPENAI_API_KEY`          | no\*     | API key. Omit to sign in with Microsoft Entra ID instead (see below). |
-| `AZURE_OPENAI_IMAGE_DEPLOYMENT` | yes      | Your gpt-image deployment name                                        |
+```text
+/mcp edit imagegen
+```
 
-\***Authentication** — set `AZURE_OPENAI_API_KEY`, **or** leave it unset to use
-**Microsoft Entra ID** (the "login" method). With no key the server authenticates
-via `DefaultAzureCredential`: Azure CLI `az login` for local dev, a managed
-identity when hosted on Azure, or a service principal
-(`AZURE_CLIENT_ID` / `AZURE_TENANT_ID` / `AZURE_CLIENT_SECRET`). Your identity
-needs the **Cognitive Services OpenAI User** role on the resource. Tokens are
-fetched and refreshed automatically.
+In **Environment Variables**, enter one of these JSON objects.
+
+Microsoft Entra ID:
+
+```json
+{
+  "AZURE_OPENAI_ENDPOINT": "https://YOUR-RESOURCE.openai.azure.com/openai/v1",
+  "AZURE_OPENAI_IMAGE_DEPLOYMENT": "gpt-image-2"
+}
+```
+
+API key:
+
+```json
+{
+  "AZURE_OPENAI_ENDPOINT": "https://YOUR-RESOURCE.openai.azure.com/openai/v1",
+  "AZURE_OPENAI_IMAGE_DEPLOYMENT": "gpt-image-2",
+  "AZURE_OPENAI_API_KEY": "YOUR-KEY"
+}
+```
+
+Enter API keys only in the MCP editor, never in chat. For Entra ID, omit
+`AZURE_OPENAI_API_KEY`; sign in with `az login` or use a managed identity or
+service principal. The identity needs the **Cognitive Services OpenAI User**
+role. Press **Ctrl+S**, then retry the image request.
 
 Images are returned inline, shown in the app, and **not** written to disk by
 default; pass `output_dir` to save files and return paths instead.
-
-PowerShell (persistent, user-level) — then **restart Copilot**:
-
-```powershell
-setx AZURE_OPENAI_ENDPOINT "https://my-res.openai.azure.com"
-setx AZURE_OPENAI_API_KEY "..."
-setx AZURE_OPENAI_IMAGE_DEPLOYMENT "gpt-image-2"
-```
-
-`setx` only affects new processes, so restart Copilot afterward. If a tool errors
-with "unexpanded placeholder", your Copilot build didn't expand `${VAR}` — set the
-values directly with `/mcp edit imagegen` instead.
 
 ## Install
 
@@ -72,7 +73,8 @@ copilot plugin marketplace add OWNER/REPO
 copilot plugin install imagegen@imagegen
 ```
 
-Set the variables from **Configure** above, then restart Copilot. The MCP server is registered automatically from `.mcp.json`.
+The MCP server is registered automatically from `.mcp.json`; complete the
+**Configure** step above before generating an image.
 
 ## Use
 
