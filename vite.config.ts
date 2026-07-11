@@ -23,17 +23,12 @@ export default defineConfig({
   build: {
     outDir,
     emptyOutDir: false, // keep the committed dist/index.js next to it
-    target: "es2020",
-    sourcemap: false,
-    rollupOptions: { input: path.join(uiDir, "mcp-app.html") },
+    rolldownOptions: { input: path.join(uiDir, "mcp-app.html") },
   },
   pack: {
     entry: "mcp-server/index.ts",
     outDir,
     clean: false,
-    format: "esm",
-    platform: "node",
-    target: "node18",
     fixedExtension: false,
     deps: { alwaysBundle: [/.*/], onlyBundle: false },
     outputOptions: { codeSplitting: false },

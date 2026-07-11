@@ -17,7 +17,7 @@ intermediate frames live; streamed frames are never written to disk.
 
 ## Prerequisites
 
-- Node.js 18 or newer.
+- Node.js 24 or newer.
 - An Azure OpenAI resource with a `gpt-image` model deployment.
 
 ## Configure
@@ -83,7 +83,7 @@ Ask Copilot, for example:
 ## Develop
 
 Development uses [Vite+](https://viteplus.dev/) and pins Node.js 24 through
-`package.json`; the bundled server itself runs on Node.js 18+. Install the `vp`
+`package.json`; the bundled server itself runs on Node.js 24+. Install the `vp`
 CLI first, then use it for dependencies, checks, tests, and builds.
 
 The server is written in TypeScript (`mcp-server/*.ts`) and packed by tsdown into
