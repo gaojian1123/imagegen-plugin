@@ -28,8 +28,9 @@
   `AZURE_OPENAI_*` from the environment.
 - **Env var names:** `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_KEY`,
   `AZURE_OPENAI_IMAGE_DEPLOYMENT`. Output directory is a per-call `output_dir`
-  tool argument, not an env var; omit it to return standard MCP image content
-  and keep an in-app handle (no file written), or pass it to save to disk.
+  tool argument, not an env var; omit it to keep an in-app handle for MCP Apps
+  clients or return standard image content to other clients (no file written),
+  or pass it to save to disk.
 
 ## Agent skills
 

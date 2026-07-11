@@ -52430,6 +52430,11 @@ function N3(Z, $, J, X, V) {
 		...X
 	}, V);
 }
+var TQ = "io.modelcontextprotocol/ui";
+function Y3(Z) {
+	if (!Z) return;
+	return Z.extensions?.[TQ];
+}
 //#endregion
 //#region mcp-server/preview.ts
 const PREVIEW_URI = "imagegen://preview";
@@ -52505,6 +52510,9 @@ let uiHtml;
 function registerImagegen(server, client, deployment) {
 	const previewResource = attachPreviewResource(server);
 	const store = createImageStore();
+	function clientSupportsApps() {
+		return Y3(server.server.getClientCapabilities())?.mimeTypes?.includes(p) === true;
+	}
 	N3(server, "Imagegen UI", UI_URI, {
 		title: "Imagegen image viewer",
 		description: "Interactive image viewer: shows generated/edited images, a save button, and live streamed partials."
@@ -52536,7 +52544,7 @@ function registerImagegen(server, client, deployment) {
 		]).default("png").describe("Output image format."),
 		output_compression: numberType().int().min(0).max(100).optional().describe("Compression level 0-100 for webp/jpeg output (GPT image models only; not valid with png)."),
 		n: numberType().int().min(1).max(10).default(1).describe("How many images to generate (max 10)."),
-		output_dir: stringType().min(1, "output_dir must not be empty").optional().describe("Directory to write image files to. Omit to return images inline and keep them in the app without writing files; pass it to avoid embedding image bytes in the tool result."),
+		output_dir: stringType().min(1, "output_dir must not be empty").optional().describe("Directory to write image files to. Omit to keep images in MCP Apps or return them inline to other clients without writing files; pass it to save files instead."),
 		filename: stringType().optional().describe("Base filename (an index is appended when n > 1).")
 	};
 	const moderation = enumType(["low", "auto"]).default("auto").describe("Content-moderation level for GPT image models; 'low' is less restrictive than the default 'auto'.");
@@ -52550,7 +52558,7 @@ function registerImagegen(server, client, deployment) {
 	})).describe("The generated images. `path` is set when written to disk; `id` is the in-app handle when it wasn't.") };
 	function summarize(results) {
 		return results.map((r) => {
-			return `${r.path ? `Saved ${r.path}` : `Generated ${r.filename} (returned inline; pass output_dir to save it to disk)`} (${r.bytes} bytes)${r.revised_prompt ? ` — revised prompt: ${r.revised_prompt}` : ""}`;
+			return `${r.path ? `Saved ${r.path}` : `Generated ${r.filename} (pass output_dir to save it to disk)`} (${r.bytes} bytes)${r.revised_prompt ? ` — revised prompt: ${r.revised_prompt}` : ""}`;
 		}).join("\n");
 	}
 	function imageContent(b64, outputFormat) {
@@ -52586,7 +52594,7 @@ function registerImagegen(server, client, deployment) {
 				content: [{
 					type: "text",
 					text: summarize(images)
-				}, ...args.output_dir ? [] : data.map((item) => imageContent(item.b64_json, args.output_format))],
+				}, ...!args.output_dir && !clientSupportsApps() ? data.map((item) => imageContent(item.b64_json, args.output_format)) : []],
 				structuredContent: { images }
 			};
 		} catch (e) {
@@ -52605,6 +52613,7 @@ function registerImagegen(server, client, deployment) {
 			if (args.n > 1) throw new Error("Streaming (partial_images > 0) supports n = 1 only.");
 			previewResource.reset();
 			const saveDir = args.output_dir;
+			const includeImageContent = !saveDir && !clientSupportsApps();
 			const [finalName] = resolveFilenames({
 				filename: args.filename,
 				prompt: args.prompt,
@@ -52632,7 +52641,7 @@ function registerImagegen(server, client, deployment) {
 						filename: finalName,
 						bytes: Buffer.byteLength(frameContent.data, "base64")
 					};
-					finalContent = frameContent;
+					if (includeImageContent) finalContent = frameContent;
 				}
 				if (token !== void 0) {
 					const progress = frame.kind === "final" ? total : frame.index + 1;
@@ -52668,7 +52677,7 @@ function registerImagegen(server, client, deployment) {
 	}
 	K3(server, "generate_image", {
 		title: "Generate image",
-		description: "Generate images from a text prompt. Returns images inline and in the app by default; pass output_dir to save files instead of embedding image bytes in the tool result.",
+		description: "Generate images from a text prompt. MCP Apps clients display them in the app; other clients receive standard image content. Pass output_dir to save files instead.",
 		inputSchema: {
 			prompt: stringType().min(1).describe("What to generate."),
 			...common,
@@ -52680,7 +52689,7 @@ function registerImagegen(server, client, deployment) {
 	}, (args, extra) => args.partial_images > 0 ? runStream(args, extra, (client, deployment, signal) => generateStream(client, deployment, args, signal)) : run(args, (client, deployment) => generate(client, deployment, args)));
 	K3(server, "edit_image", {
 		title: "Edit image",
-		description: "Edit or inpaint one or more existing images with a text prompt. Returns results inline and in the app by default; pass output_dir to save files instead of embedding image bytes in the tool result.",
+		description: "Edit or inpaint one or more existing images with a text prompt. MCP Apps clients display results in the app; other clients receive standard image content. Pass output_dir to save files instead.",
 		inputSchema: {
 			prompt: stringType().min(1).describe("How to edit the image(s)."),
 			images: arrayType(stringType()).min(1).describe("Input images: file paths, or in-app image ids returned by a previous generate/edit that wasn't saved to disk."),

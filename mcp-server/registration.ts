@@ -8,6 +8,7 @@ import type {
 import {
   registerAppTool,
   registerAppResource,
+  getUiCapability,
   RESOURCE_MIME_TYPE,
 } from "@modelcontextprotocol/ext-apps/server";
 import fs from "node:fs";
@@ -48,8 +49,17 @@ export function registerImagegen(server: McpServer, client: OpenAI, deployment: 
   const previewResource = attachPreviewResource(server);
 
   // Holds image bytes when a call isn't asked to write them to disk, so the App UI
-  // can fetch them by id (read_image) independently of the standard inline result.
+  // can fetch them by id (read_image) without embedding them in an App client's
+  // tool result.
   const store = createImageStore();
+
+  function clientSupportsApps(): boolean {
+    return (
+      getUiCapability(server.server.getClientCapabilities())?.mimeTypes?.includes(
+        RESOURCE_MIME_TYPE,
+      ) === true
+    );
+  }
 
   registerAppResource(
     server,
@@ -100,7 +110,7 @@ export function registerImagegen(server: McpServer, client: OpenAI, deployment: 
       .min(1, "output_dir must not be empty")
       .optional()
       .describe(
-        "Directory to write image files to. Omit to return images inline and keep them in the app without writing files; pass it to avoid embedding image bytes in the tool result.",
+        "Directory to write image files to. Omit to keep images in MCP Apps or return them inline to other clients without writing files; pass it to save files instead.",
       ),
     filename: z.string().optional().describe("Base filename (an index is appended when n > 1)."),
   };
@@ -145,7 +155,7 @@ export function registerImagegen(server: McpServer, client: OpenAI, deployment: 
       .map((r) => {
         const where = r.path
           ? `Saved ${r.path}`
-          : `Generated ${r.filename} (returned inline; pass output_dir to save it to disk)`;
+          : `Generated ${r.filename} (pass output_dir to save it to disk)`;
         return `${where} (${r.bytes} bytes)${r.revised_prompt ? ` — revised prompt: ${r.revised_prompt}` : ""}`;
       })
       .join("\n");
@@ -189,9 +199,9 @@ export function registerImagegen(server: McpServer, client: OpenAI, deployment: 
       return {
         content: [
           { type: "text" as const, text: summarize(images) },
-          ...(args.output_dir
-            ? []
-            : data.map((item) => imageContent(item.b64_json, args.output_format))),
+          ...(!args.output_dir && !clientSupportsApps()
+            ? data.map((item) => imageContent(item.b64_json, args.output_format))
+            : []),
         ],
         structuredContent: { images },
       };
@@ -226,6 +236,7 @@ export function registerImagegen(server: McpServer, client: OpenAI, deployment: 
       // Partial frames are never written to disk — they're exposed only through the
       // in-memory preview resource (which the app polls via read_image).
       const saveDir = args.output_dir;
+      const includeImageContent = !saveDir && !clientSupportsApps();
       const [finalName] = resolveFilenames({
         filename: args.filename,
         prompt: args.prompt,
@@ -251,7 +262,7 @@ export function registerImagegen(server: McpServer, client: OpenAI, deployment: 
               filename: finalName,
               bytes: Buffer.byteLength(frameContent.data, "base64"),
             };
-            finalContent = frameContent;
+            if (includeImageContent) finalContent = frameContent;
           }
         }
         if (token !== undefined) {
@@ -297,7 +308,7 @@ export function registerImagegen(server: McpServer, client: OpenAI, deployment: 
     {
       title: "Generate image",
       description:
-        "Generate images from a text prompt. Returns images inline and in the app by default; pass output_dir to save files instead of embedding image bytes in the tool result.",
+        "Generate images from a text prompt. MCP Apps clients display them in the app; other clients receive standard image content. Pass output_dir to save files instead.",
       inputSchema: {
         prompt: z.string().min(1).describe("What to generate."),
         ...common,
@@ -321,7 +332,7 @@ export function registerImagegen(server: McpServer, client: OpenAI, deployment: 
     {
       title: "Edit image",
       description:
-        "Edit or inpaint one or more existing images with a text prompt. Returns results inline and in the app by default; pass output_dir to save files instead of embedding image bytes in the tool result.",
+        "Edit or inpaint one or more existing images with a text prompt. MCP Apps clients display results in the app; other clients receive standard image content. Pass output_dir to save files instead.",
       inputSchema: {
         prompt: z.string().min(1).describe("How to edit the image(s)."),
         images: z

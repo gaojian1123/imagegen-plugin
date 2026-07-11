@@ -4,6 +4,7 @@ import type { OpenAI } from "openai";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
+import { EXTENSION_ID, RESOURCE_MIME_TYPE } from "@modelcontextprotocol/ext-apps/server";
 import { buildServer } from "./server.ts";
 
 test("server exposes an accurate MCP registration surface", async () => {
@@ -16,11 +17,11 @@ test("server exposes an accurate MCP registration surface", async () => {
     const tools = new Map((await client.listTools()).tools.map((tool) => [tool.name, tool]));
     assert.equal(
       tools.get("generate_image")?.description,
-      "Generate images from a text prompt. Returns images inline and in the app by default; pass output_dir to save files instead of embedding image bytes in the tool result.",
+      "Generate images from a text prompt. MCP Apps clients display them in the app; other clients receive standard image content. Pass output_dir to save files instead.",
     );
     assert.equal(
       tools.get("edit_image")?.description,
-      "Edit or inpaint one or more existing images with a text prompt. Returns results inline and in the app by default; pass output_dir to save files instead of embedding image bytes in the tool result.",
+      "Edit or inpaint one or more existing images with a text prompt. MCP Apps clients display results in the app; other clients receive standard image content. Pass output_dir to save files instead.",
     );
     assert.deepEqual(tools.get("read_image")?.annotations, {
       readOnlyHint: true,
@@ -61,6 +62,51 @@ test("generate_image returns standard image content without output_dir", async (
         mimeType: "image/png",
       },
     );
+  } finally {
+    await client.close();
+    await server.close();
+  }
+});
+
+test("generate_image omits image content for MCP Apps clients", async () => {
+  const data = Buffer.from("app image").toString("base64");
+  const openai = {
+    images: {
+      generate: async (params: Record<string, unknown>) =>
+        params.stream
+          ? (async function* () {
+              yield { type: "image_generation.completed", b64_json: data };
+            })()
+          : { data: [{ b64_json: data }] },
+    },
+  } as unknown as OpenAI;
+  const server = buildServer(openai, "test-deployment");
+  const client = new Client(
+    { name: "mcp-app-client", version: "0" },
+    {
+      capabilities: {
+        extensions: {
+          [EXTENSION_ID]: { mimeTypes: [RESOURCE_MIME_TYPE] },
+        },
+      },
+    },
+  );
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+
+  try {
+    for (const arguments_ of [
+      { prompt: "test image" },
+      { prompt: "test image", partial_images: 1 },
+    ]) {
+      const result = CallToolResultSchema.parse(
+        await client.callTool({ name: "generate_image", arguments: arguments_ }),
+      );
+      assert.equal(
+        result.content.some((item) => item.type === "image"),
+        false,
+      );
+    }
   } finally {
     await client.close();
     await server.close();
