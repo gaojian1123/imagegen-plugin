@@ -120,6 +120,19 @@ Ask Copilot, Codex, or Claude Code, for example:
 - "Generate a 1024x1024 image of a red fox on a transparent background."
 - "Edit ./fox.png to add a snowy background."
 
+## Run over Streamable HTTP
+
+After completing **Configure**, start the real Azure-backed HTTP MCP server:
+
+```shell
+vp run http
+```
+
+It serves `http://127.0.0.1:3001/mcp`. Set `HOST` or `PORT` to override the
+listener; the default is loopback-only. Browser CORS is limited to loopback
+origins. If you expose the server beyond the local machine, put it behind an
+authenticated TLS reverse proxy—changing `HOST` alone does not add authentication.
+
 ## Develop
 
 Development uses [Vite+](https://viteplus.dev/) and pins Node.js 24 through
@@ -156,8 +169,9 @@ vp run dev:check   # headless: proves streamed partials are served live during a
                    # generate call, and that read_image({ id }) fetch works
 ```
 
-To see it render in a real browser host, run the dev server (Streamable HTTP with
-fake images) and point [ext-apps `basic-host`](https://github.com/modelcontextprotocol/ext-apps/tree/main/examples/basic-host)
+To see it render in a real browser host without spending Azure quota, run the
+fake Streamable HTTP dev server and point
+[ext-apps `basic-host`](https://github.com/modelcontextprotocol/ext-apps/tree/main/examples/basic-host)
 at it:
 
 ```shell

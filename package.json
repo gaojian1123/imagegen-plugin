@@ -10,6 +10,7 @@
     "typecheck": "tsc",
     "smoke": "node scripts/smoke.mjs",
     "preview": "node scripts/preview-client.mjs",
+    "http": "vp build && node scripts/http-host.mjs",
     "dev:host": "vp build && node scripts/dev-host.mjs",
     "dev:check": "node scripts/dev-check.mjs"
   },
