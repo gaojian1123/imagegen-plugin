@@ -19,15 +19,12 @@ import type { OpenAI } from "openai";
 import {
   generate,
   edit,
-  saveBase64Images,
   generateStream,
   editStream,
-  writeB64,
   resolveFilenames,
-  readImageAsDataUri,
   storeBase64Images,
 } from "./client.ts";
-import type { ImageItem, SavedImage, StreamFrame, ImageResult } from "./client.ts";
+import type { ImageItem, StreamFrame, ImageResult, GenerateArgs, EditArgs } from "./client.ts";
 import { attachPreviewResource, previewMime } from "./preview.ts";
 import { createImageStore } from "./store.ts";
 
@@ -53,15 +50,7 @@ export function registerImagegen(server: McpServer, client: OpenAI, deployment: 
   // tool result.
   const store = createImageStore();
 
-  function clientSupportsApps(): boolean {
-    return (
-      getUiCapability(server.server.getClientCapabilities())?.mimeTypes?.includes(
-        RESOURCE_MIME_TYPE,
-      ) === true
-    );
-  }
-
-  registerAppResource(
+  const uiResource = registerAppResource(
     server,
     "Imagegen UI",
     UI_URI,
@@ -75,6 +64,7 @@ export function registerImagegen(server: McpServer, client: OpenAI, deployment: 
       return { contents: [{ uri: UI_URI, mimeType: RESOURCE_MIME_TYPE, text: uiHtml }] };
     },
   );
+  uiResource.disable();
 
   const common = {
     size: z
@@ -105,13 +95,6 @@ export function registerImagegen(server: McpServer, client: OpenAI, deployment: 
         "Compression level 0-100 for webp/jpeg output (GPT image models only; not valid with png).",
       ),
     n: z.number().int().min(1).max(10).default(1).describe("How many images to generate (max 10)."),
-    output_dir: z
-      .string()
-      .min(1, "output_dir must not be empty")
-      .optional()
-      .describe(
-        "Directory to write image files to. Omit to keep images in MCP Apps or return them inline to other clients without writing files; pass it to save files instead.",
-      ),
     filename: z.string().optional().describe("Base filename (an index is appended when n > 1)."),
   };
 
@@ -138,26 +121,21 @@ export function registerImagegen(server: McpServer, client: OpenAI, deployment: 
     images: z
       .array(
         z.object({
-          path: z.string().optional(),
-          id: z.string().optional(),
+          id: z.string(),
           filename: z.string(),
           bytes: z.number(),
           revised_prompt: z.string().optional(),
         }),
       )
-      .describe(
-        "The generated images. `path` is set when written to disk; `id` is the in-app handle when it wasn't.",
-      ),
+      .describe("The generated images and their session ids for later edits."),
   };
 
   function summarize(results: ImageResult[]): string {
     return results
-      .map((r) => {
-        const where = r.path
-          ? `Saved ${r.path}`
-          : `Generated ${r.filename} (pass output_dir to save it to disk)`;
-        return `${where} (${r.bytes} bytes)${r.revised_prompt ? ` — revised prompt: ${r.revised_prompt}` : ""}`;
-      })
+      .map(
+        (r) =>
+          `Generated ${r.filename} (${r.bytes} bytes)${r.revised_prompt ? ` — revised prompt: ${r.revised_prompt}` : ""}`,
+      )
       .join("\n");
   }
 
@@ -167,39 +145,20 @@ export function registerImagegen(server: McpServer, client: OpenAI, deployment: 
     return { type: "image", data: b64, mimeType: previewMime(outputFormat) };
   }
 
-  // A disk-saved image and an in-store image are the same shape to the UI/model.
-  function savedToResult(s: SavedImage): ImageResult {
-    return {
-      path: s.path,
-      filename: path.basename(s.path),
-      bytes: s.bytes,
-      revised_prompt: s.revised_prompt,
-    };
-  }
-
   type Call = (client: OpenAI, deployment: string) => Promise<ImageItem[]>;
 
-  async function run(args: RunArgs, call: Call) {
+  async function run(args: RunArgs, call: Call, includeImageContent: boolean) {
     try {
       const data = await call(client, deployment);
-      // Opt-in disk save: write files only when output_dir is given, otherwise keep
-      // the bytes in memory for the app to fetch by id.
-      const images = args.output_dir
-        ? saveBase64Images(data, {
-            outputDir: args.output_dir,
-            filename: args.filename,
-            prompt: args.prompt,
-            outputFormat: args.output_format,
-          }).map(savedToResult)
-        : storeBase64Images(store, data, {
-            filename: args.filename,
-            prompt: args.prompt,
-            outputFormat: args.output_format,
-          });
+      const images = storeBase64Images(store, data, {
+        filename: args.filename,
+        prompt: args.prompt,
+        outputFormat: args.output_format,
+      });
       return {
         content: [
           { type: "text" as const, text: summarize(images) },
-          ...(!args.output_dir && !clientSupportsApps()
+          ...(includeImageContent
             ? data.map((item) => imageContent(item.b64_json, args.output_format))
             : []),
         ],
@@ -224,6 +183,7 @@ export function registerImagegen(server: McpServer, client: OpenAI, deployment: 
     args: RunArgs & { n: number; partial_images: number },
     extra: ToolExtra,
     source: FrameSource,
+    includeImageContent: boolean,
   ) {
     try {
       // ponytail: streaming is one image at a time; multi-image streaming isn't
@@ -232,11 +192,6 @@ export function registerImagegen(server: McpServer, client: OpenAI, deployment: 
       // Clear any stale frame so the UI's first poll shows "generating", not the
       // previous run's image, before the first partial lands.
       previewResource.reset();
-      // Opt-in disk save: write the final image only when output_dir is given.
-      // Partial frames are never written to disk — they're exposed only through the
-      // in-memory preview resource (which the app polls via read_image).
-      const saveDir = args.output_dir;
-      const includeImageContent = !saveDir && !clientSupportsApps();
       const [finalName] = resolveFilenames({
         filename: args.filename,
         prompt: args.prompt,
@@ -252,18 +207,13 @@ export function registerImagegen(server: McpServer, client: OpenAI, deployment: 
         const frameContent = imageContent(frame.b64, args.output_format);
         await previewResource.update(frameContent.data, frameContent.mimeType);
         if (frame.kind === "final") {
-          if (saveDir) {
-            const s = writeB64(frameContent.data, path.join(saveDir, finalName));
-            final = { path: s.path, filename: finalName, bytes: s.bytes };
-          } else {
-            const id = store.put(frameContent.data, frameContent.mimeType);
-            final = {
-              id,
-              filename: finalName,
-              bytes: Buffer.byteLength(frameContent.data, "base64"),
-            };
-            if (includeImageContent) finalContent = frameContent;
-          }
+          const id = store.put(frameContent.data, frameContent.mimeType);
+          final = {
+            id,
+            filename: finalName,
+            bytes: Buffer.byteLength(frameContent.data, "base64"),
+          };
+          if (includeImageContent) finalContent = frameContent;
         }
         if (token !== undefined) {
           // The model may emit fewer partials than requested, so force the final
@@ -302,83 +252,111 @@ export function registerImagegen(server: McpServer, client: OpenAI, deployment: 
     }
   }
 
-  registerAppTool(
+  function handleGenerate(args: GenerateToolArgs, extra: ToolExtra, includeImageContent: boolean) {
+    return args.partial_images > 0
+      ? runStream(
+          args,
+          extra,
+          (client, deployment, signal) => generateStream(client, deployment, args, signal),
+          includeImageContent,
+        )
+      : run(args, (client, deployment) => generate(client, deployment, args), includeImageContent);
+  }
+
+  function handleEdit(args: EditToolArgs, extra: ToolExtra, includeImageContent: boolean) {
+    return args.partial_images > 0
+      ? runStream(
+          args,
+          extra,
+          (client, deployment, signal) => editStream(client, deployment, args, store, signal),
+          includeImageContent,
+        )
+      : run(
+          args,
+          (client, deployment) => edit(client, deployment, args, store),
+          includeImageContent,
+        );
+  }
+
+  const generateInputSchema = {
+    prompt: z.string().min(1).describe("What to generate."),
+    ...common,
+    moderation,
+    partial_images: partialImages,
+  };
+  const editInputSchema = {
+    prompt: z.string().min(1).describe("How to edit the image(s)."),
+    images: z
+      .array(z.string())
+      .min(1)
+      .describe(
+        "Input images: file paths or session image ids returned by a previous generate/edit.",
+      ),
+    mask: z
+      .string()
+      .optional()
+      .describe(
+        "Optional PNG mask (a file path or session image id) with an alpha channel marking the region to edit.",
+      ),
+    ...common,
+    partial_images: partialImages,
+  };
+  const generateAppDescription =
+    "Generate images from a text prompt. Displays results in the App and returns session image ids for later edits.";
+  const generatePlainDescription =
+    "Generate images from a text prompt. Returns standard image content plus session image ids for later edits.";
+  const editAppDescription =
+    "Edit or inpaint images from file paths or session image ids. Displays results in the App and returns new session image ids.";
+  const editPlainDescription =
+    "Edit or inpaint images from file paths or session image ids. Returns standard image content plus new session image ids.";
+  const generateAppCallback = (args: GenerateToolArgs, extra: ToolExtra) =>
+    handleGenerate(args, extra, false);
+  const generatePlainCallback = (args: GenerateToolArgs, extra: ToolExtra) =>
+    handleGenerate(args, extra, true);
+  const editAppCallback = (args: EditToolArgs, extra: ToolExtra) => handleEdit(args, extra, false);
+  const editPlainCallback = (args: EditToolArgs, extra: ToolExtra) => handleEdit(args, extra, true);
+
+  const generateTool = registerAppTool(
     server,
     "generate_image",
     {
       title: "Generate image",
-      description:
-        "Generate images from a text prompt. MCP Apps clients display them in the app; other clients receive standard image content. Pass output_dir to save files instead.",
-      inputSchema: {
-        prompt: z.string().min(1).describe("What to generate."),
-        ...common,
-        moderation,
-        partial_images: partialImages,
-      },
+      description: generateAppDescription,
+      inputSchema: generateInputSchema,
       outputSchema,
       _meta: { ui: { resourceUri: UI_URI } },
     },
-    (args, extra) =>
-      args.partial_images > 0
-        ? runStream(args, extra, (client, deployment, signal) =>
-            generateStream(client, deployment, args, signal),
-          )
-        : run(args, (client, deployment) => generate(client, deployment, args)),
+    generateAppCallback,
   );
 
-  registerAppTool(
+  const editTool = registerAppTool(
     server,
     "edit_image",
     {
       title: "Edit image",
-      description:
-        "Edit or inpaint one or more existing images with a text prompt. MCP Apps clients display results in the app; other clients receive standard image content. Pass output_dir to save files instead.",
-      inputSchema: {
-        prompt: z.string().min(1).describe("How to edit the image(s)."),
-        images: z
-          .array(z.string())
-          .min(1)
-          .describe(
-            "Input images: file paths, or in-app image ids returned by a previous generate/edit that wasn't saved to disk.",
-          ),
-        mask: z
-          .string()
-          .optional()
-          .describe(
-            "Optional PNG mask (a file path or in-app id) with an alpha channel marking the region to edit.",
-          ),
-        ...common,
-        partial_images: partialImages,
-      },
+      description: editAppDescription,
+      inputSchema: editInputSchema,
       outputSchema,
       _meta: { ui: { resourceUri: UI_URI } },
     },
-    (args, extra) =>
-      args.partial_images > 0
-        ? runStream(args, extra, (client, deployment, signal) =>
-            editStream(client, deployment, args, store, signal),
-          )
-        : run(args, (client, deployment) => edit(client, deployment, args, store)),
+    editAppCallback,
   );
 
   // App-only helper the UI calls (never the model): returns image bytes as a data:
-  // URI so the app can render/download them. Fetch by `path` (a saved file), by
-  // `id` (an in-memory image from a tool result), or with neither to get the latest
-  // streamed partial. This lets the app fetch bytes without parsing tool content.
-  registerAppTool(
+  // URI so the app can render/download them. Fetch by session `id`, or with no
+  // argument to get the latest streamed partial.
+  const readImageTool = registerAppTool(
     server,
     "read_image",
     {
       title: "Read image (UI)",
       description:
-        "Return an image as a data URI for the UI: by `path` (saved file), by `id` (in-app image), or the latest streamed partial when neither is given.",
+        "Return an image as a data URI for the UI: by session image id, or the latest streamed partial when no id is given.",
       inputSchema: {
-        path: z.string().optional().describe("Saved image path."),
-        id: z.string().optional().describe("In-app image id from a tool result."),
+        id: z.string().optional().describe("Session image id from a tool result."),
       },
       outputSchema: {
         dataUri: z.string().optional(),
-        path: z.string().optional(),
         id: z.string().optional(),
       },
       annotations: { readOnlyHint: true, destructiveHint: false },
@@ -386,13 +364,6 @@ export function registerImagegen(server: McpServer, client: OpenAI, deployment: 
     },
     (args) => {
       try {
-        if (args.path) {
-          const { dataUri } = readImageAsDataUri(args.path);
-          return {
-            content: [{ type: "text" as const, text: "ok" }],
-            structuredContent: { dataUri, path: args.path },
-          };
-        }
         if (args.id) {
           const entry = store.get(args.id);
           if (!entry) throw new Error(`Unknown image id: ${args.id}`);
@@ -421,14 +392,41 @@ export function registerImagegen(server: McpServer, client: OpenAI, deployment: 
       }
     },
   );
+  readImageTool.disable();
+  const generateAppMeta = generateTool._meta ?? {};
+  const editAppMeta = editTool._meta ?? {};
+
+  server.server.oninitialized = () => {
+    const clientSupportsApps =
+      getUiCapability(server.server.getClientCapabilities())?.mimeTypes?.includes(
+        RESOURCE_MIME_TYPE,
+      ) === true;
+
+    generateTool.update({
+      description: clientSupportsApps ? generateAppDescription : generatePlainDescription,
+      paramsSchema: generateInputSchema,
+      callback: clientSupportsApps ? generateAppCallback : generatePlainCallback,
+      _meta: clientSupportsApps ? generateAppMeta : {},
+    });
+    editTool.update({
+      description: clientSupportsApps ? editAppDescription : editPlainDescription,
+      paramsSchema: editInputSchema,
+      callback: clientSupportsApps ? editAppCallback : editPlainCallback,
+      _meta: clientSupportsApps ? editAppMeta : {},
+    });
+    uiResource.update({ enabled: clientSupportsApps });
+    readImageTool.update({ enabled: clientSupportsApps });
+  };
 }
 
 interface RunArgs {
   prompt: string;
   output_format: string;
-  output_dir?: string;
   filename?: string;
 }
+
+type GenerateToolArgs = GenerateArgs & { filename?: string; partial_images: number };
+type EditToolArgs = EditArgs & { filename?: string; partial_images: number };
 
 // The tool handler's `extra`, used to emit progress notifications. The
 // notification is best-effort (a host that ignores it loses nothing).

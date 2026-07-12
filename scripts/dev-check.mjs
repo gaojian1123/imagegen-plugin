@@ -4,12 +4,22 @@
 // transport. Run: vp run dev:check
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { EXTENSION_ID, RESOURCE_MIME_TYPE } from "@modelcontextprotocol/ext-apps/server";
 import { buildServer } from "../mcp-server/server.ts";
 import { createFakeClient } from "./fake-images.mjs";
 
 const server = buildServer(createFakeClient(300), "fake-deployment");
 const [clientT, serverT] = InMemoryTransport.createLinkedPair();
-const client = new Client({ name: "dev-check", version: "0" });
+const client = new Client(
+  { name: "dev-check", version: "0" },
+  {
+    capabilities: {
+      extensions: {
+        [EXTENSION_ID]: { mimeTypes: [RESOURCE_MIME_TYPE] },
+      },
+    },
+  },
+);
 await Promise.all([server.connect(serverT), client.connect(clientT)]);
 
 console.log(

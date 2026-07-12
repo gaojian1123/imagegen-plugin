@@ -38603,28 +38603,6 @@ function resolveFilenames({ filename, prompt, count, outputFormat, now }) {
 	if (count === 1) return [`${base}.${ext}`];
 	return Array.from({ length: count }, (_, i) => `${base}-${i + 1}.${ext}`);
 }
-function writeB64(b64, fullPath, revised_prompt) {
-	if (typeof b64 !== "string") throw new Error("Image response is missing base64 data (b64_json).");
-	const buf = Buffer.from(b64, "base64");
-	fs.mkdirSync(path.dirname(fullPath), { recursive: true });
-	fs.writeFileSync(fullPath, buf);
-	return {
-		path: fullPath,
-		bytes: buf.length,
-		revised_prompt
-	};
-}
-function saveBase64Images(data, { outputDir, filename, prompt, outputFormat, now = /* @__PURE__ */ new Date() }) {
-	fs.mkdirSync(outputDir, { recursive: true });
-	const names = resolveFilenames({
-		filename,
-		prompt,
-		count: data.length,
-		outputFormat,
-		now
-	});
-	return data.map((item, i) => writeB64(item.b64_json, path.join(outputDir, names[i]), item.revised_prompt));
-}
 async function generate(client, deployment, args) {
 	const { prompt, size, quality, background, output_format, n, moderation, output_compression } = args;
 	assertValidFormat(background, output_format);
@@ -38648,13 +38626,6 @@ const IMAGE_MIME = {
 	jpeg: "image/jpeg",
 	webp: "image/webp"
 };
-function readImageAsDataUri(p) {
-	const ext = path.extname(p).slice(1).toLowerCase();
-	const mime = IMAGE_MIME[ext];
-	if (!mime) throw new Error(`Not an image file: ${p}`);
-	if (!fs.existsSync(p)) throw new Error(`Image not found: ${p}`);
-	return { dataUri: `data:${mime};base64,${fs.readFileSync(p).toString("base64")}` };
-}
 function storeBase64Images(store, data, { filename, prompt, outputFormat, now = /* @__PURE__ */ new Date() }) {
 	const names = resolveFilenames({
 		filename,
@@ -52510,10 +52481,7 @@ let uiHtml;
 function registerImagegen(server, client, deployment) {
 	const previewResource = attachPreviewResource(server);
 	const store = createImageStore();
-	function clientSupportsApps() {
-		return Y3(server.server.getClientCapabilities())?.mimeTypes?.includes(p) === true;
-	}
-	N3(server, "Imagegen UI", UI_URI, {
+	const uiResource = N3(server, "Imagegen UI", UI_URI, {
 		title: "Imagegen image viewer",
 		description: "Interactive image viewer: shows generated/edited images, a save button, and live streamed partials."
 	}, () => {
@@ -52524,6 +52492,7 @@ function registerImagegen(server, client, deployment) {
 			text: uiHtml
 		}] };
 	});
+	uiResource.disable();
 	const common = {
 		size: stringType().regex(/^(auto|\d+x\d+)$/, "size must be 'auto' or a WIDTHxHEIGHT string like '1536x864'").default("auto").describe("'auto' (default; the model picks dimensions) or a WIDTHxHEIGHT string for gpt-image-2. Common sizes: 1024x1024, 1536x1024, 1024x1536, 2048x2048, 2048x1152, 3840x2160. Constraints: both edges multiples of 16, longest edge ≤ 3840, long:short ratio ≤ 3:1, total pixels between 655,360 and 8,294,400."),
 		quality: enumType([
@@ -52544,22 +52513,18 @@ function registerImagegen(server, client, deployment) {
 		]).default("png").describe("Output image format."),
 		output_compression: numberType().int().min(0).max(100).optional().describe("Compression level 0-100 for webp/jpeg output (GPT image models only; not valid with png)."),
 		n: numberType().int().min(1).max(10).default(1).describe("How many images to generate (max 10)."),
-		output_dir: stringType().min(1, "output_dir must not be empty").optional().describe("Directory to write image files to. Omit to keep images in MCP Apps or return them inline to other clients without writing files; pass it to save files instead."),
 		filename: stringType().optional().describe("Base filename (an index is appended when n > 1).")
 	};
 	const moderation = enumType(["low", "auto"]).default("auto").describe("Content-moderation level for GPT image models; 'low' is less restrictive than the default 'auto'.");
 	const partialImages = numberType().int().min(0).max(3).default(0).describe("Stream this many progressive preview frames for live viewing before the final image (0 = off). Requires n = 1.");
 	const outputSchema = { images: arrayType(objectType({
-		path: stringType().optional(),
-		id: stringType().optional(),
+		id: stringType(),
 		filename: stringType(),
 		bytes: numberType(),
 		revised_prompt: stringType().optional()
-	})).describe("The generated images. `path` is set when written to disk; `id` is the in-app handle when it wasn't.") };
+	})).describe("The generated images and their session ids for later edits.") };
 	function summarize(results) {
-		return results.map((r) => {
-			return `${r.path ? `Saved ${r.path}` : `Generated ${r.filename} (pass output_dir to save it to disk)`} (${r.bytes} bytes)${r.revised_prompt ? ` — revised prompt: ${r.revised_prompt}` : ""}`;
-		}).join("\n");
+		return results.map((r) => `Generated ${r.filename} (${r.bytes} bytes)${r.revised_prompt ? ` — revised prompt: ${r.revised_prompt}` : ""}`).join("\n");
 	}
 	function imageContent(b64, outputFormat) {
 		if (typeof b64 !== "string") throw new Error("Image response is missing base64 data (b64_json).");
@@ -52569,23 +52534,10 @@ function registerImagegen(server, client, deployment) {
 			mimeType: previewMime(outputFormat)
 		};
 	}
-	function savedToResult(s) {
-		return {
-			path: s.path,
-			filename: path.basename(s.path),
-			bytes: s.bytes,
-			revised_prompt: s.revised_prompt
-		};
-	}
-	async function run(args, call) {
+	async function run(args, call, includeImageContent) {
 		try {
 			const data = await call(client, deployment);
-			const images = args.output_dir ? saveBase64Images(data, {
-				outputDir: args.output_dir,
-				filename: args.filename,
-				prompt: args.prompt,
-				outputFormat: args.output_format
-			}).map(savedToResult) : storeBase64Images(store, data, {
+			const images = storeBase64Images(store, data, {
 				filename: args.filename,
 				prompt: args.prompt,
 				outputFormat: args.output_format
@@ -52594,7 +52546,7 @@ function registerImagegen(server, client, deployment) {
 				content: [{
 					type: "text",
 					text: summarize(images)
-				}, ...!args.output_dir && !clientSupportsApps() ? data.map((item) => imageContent(item.b64_json, args.output_format)) : []],
+				}, ...includeImageContent ? data.map((item) => imageContent(item.b64_json, args.output_format)) : []],
 				structuredContent: { images }
 			};
 		} catch (e) {
@@ -52608,12 +52560,10 @@ function registerImagegen(server, client, deployment) {
 			};
 		}
 	}
-	async function runStream(args, extra, source) {
+	async function runStream(args, extra, source, includeImageContent) {
 		try {
 			if (args.n > 1) throw new Error("Streaming (partial_images > 0) supports n = 1 only.");
 			previewResource.reset();
-			const saveDir = args.output_dir;
-			const includeImageContent = !saveDir && !clientSupportsApps();
 			const [finalName] = resolveFilenames({
 				filename: args.filename,
 				prompt: args.prompt,
@@ -52628,14 +52578,7 @@ function registerImagegen(server, client, deployment) {
 			for await (const frame of source(client, deployment, extra.signal)) {
 				const frameContent = imageContent(frame.b64, args.output_format);
 				await previewResource.update(frameContent.data, frameContent.mimeType);
-				if (frame.kind === "final") if (saveDir) {
-					const s = writeB64(frameContent.data, path.join(saveDir, finalName));
-					final = {
-						path: s.path,
-						filename: finalName,
-						bytes: s.bytes
-					};
-				} else {
+				if (frame.kind === "final") {
 					final = {
 						id: store.put(frameContent.data, frameContent.mimeType),
 						filename: finalName,
@@ -52675,41 +52618,53 @@ function registerImagegen(server, client, deployment) {
 			};
 		}
 	}
-	K3(server, "generate_image", {
+	function handleGenerate(args, extra, includeImageContent) {
+		return args.partial_images > 0 ? runStream(args, extra, (client, deployment, signal) => generateStream(client, deployment, args, signal), includeImageContent) : run(args, (client, deployment) => generate(client, deployment, args), includeImageContent);
+	}
+	function handleEdit(args, extra, includeImageContent) {
+		return args.partial_images > 0 ? runStream(args, extra, (client, deployment, signal) => editStream(client, deployment, args, store, signal), includeImageContent) : run(args, (client, deployment) => edit(client, deployment, args, store), includeImageContent);
+	}
+	const generateInputSchema = {
+		prompt: stringType().min(1).describe("What to generate."),
+		...common,
+		moderation,
+		partial_images: partialImages
+	};
+	const editInputSchema = {
+		prompt: stringType().min(1).describe("How to edit the image(s)."),
+		images: arrayType(stringType()).min(1).describe("Input images: file paths or session image ids returned by a previous generate/edit."),
+		mask: stringType().optional().describe("Optional PNG mask (a file path or session image id) with an alpha channel marking the region to edit."),
+		...common,
+		partial_images: partialImages
+	};
+	const generateAppDescription = "Generate images from a text prompt. Displays results in the App and returns session image ids for later edits.";
+	const generatePlainDescription = "Generate images from a text prompt. Returns standard image content plus session image ids for later edits.";
+	const editAppDescription = "Edit or inpaint images from file paths or session image ids. Displays results in the App and returns new session image ids.";
+	const editPlainDescription = "Edit or inpaint images from file paths or session image ids. Returns standard image content plus new session image ids.";
+	const generateAppCallback = (args, extra) => handleGenerate(args, extra, false);
+	const generatePlainCallback = (args, extra) => handleGenerate(args, extra, true);
+	const editAppCallback = (args, extra) => handleEdit(args, extra, false);
+	const editPlainCallback = (args, extra) => handleEdit(args, extra, true);
+	const generateTool = K3(server, "generate_image", {
 		title: "Generate image",
-		description: "Generate images from a text prompt. MCP Apps clients display them in the app; other clients receive standard image content. Pass output_dir to save files instead.",
-		inputSchema: {
-			prompt: stringType().min(1).describe("What to generate."),
-			...common,
-			moderation,
-			partial_images: partialImages
-		},
+		description: generateAppDescription,
+		inputSchema: generateInputSchema,
 		outputSchema,
 		_meta: { ui: { resourceUri: UI_URI } }
-	}, (args, extra) => args.partial_images > 0 ? runStream(args, extra, (client, deployment, signal) => generateStream(client, deployment, args, signal)) : run(args, (client, deployment) => generate(client, deployment, args)));
-	K3(server, "edit_image", {
+	}, generateAppCallback);
+	const editTool = K3(server, "edit_image", {
 		title: "Edit image",
-		description: "Edit or inpaint one or more existing images with a text prompt. MCP Apps clients display results in the app; other clients receive standard image content. Pass output_dir to save files instead.",
-		inputSchema: {
-			prompt: stringType().min(1).describe("How to edit the image(s)."),
-			images: arrayType(stringType()).min(1).describe("Input images: file paths, or in-app image ids returned by a previous generate/edit that wasn't saved to disk."),
-			mask: stringType().optional().describe("Optional PNG mask (a file path or in-app id) with an alpha channel marking the region to edit."),
-			...common,
-			partial_images: partialImages
-		},
+		description: editAppDescription,
+		inputSchema: editInputSchema,
 		outputSchema,
 		_meta: { ui: { resourceUri: UI_URI } }
-	}, (args, extra) => args.partial_images > 0 ? runStream(args, extra, (client, deployment, signal) => editStream(client, deployment, args, store, signal)) : run(args, (client, deployment) => edit(client, deployment, args, store)));
-	K3(server, "read_image", {
+	}, editAppCallback);
+	const readImageTool = K3(server, "read_image", {
 		title: "Read image (UI)",
-		description: "Return an image as a data URI for the UI: by `path` (saved file), by `id` (in-app image), or the latest streamed partial when neither is given.",
-		inputSchema: {
-			path: stringType().optional().describe("Saved image path."),
-			id: stringType().optional().describe("In-app image id from a tool result.")
-		},
+		description: "Return an image as a data URI for the UI: by session image id, or the latest streamed partial when no id is given.",
+		inputSchema: { id: stringType().optional().describe("Session image id from a tool result.") },
 		outputSchema: {
 			dataUri: stringType().optional(),
-			path: stringType().optional(),
 			id: stringType().optional()
 		},
 		annotations: {
@@ -52722,19 +52677,6 @@ function registerImagegen(server, client, deployment) {
 		} }
 	}, (args) => {
 		try {
-			if (args.path) {
-				const { dataUri } = readImageAsDataUri(args.path);
-				return {
-					content: [{
-						type: "text",
-						text: "ok"
-					}],
-					structuredContent: {
-						dataUri,
-						path: args.path
-					}
-				};
-			}
 			if (args.id) {
 				const entry = store.get(args.id);
 				if (!entry) throw new Error(`Unknown image id: ${args.id}`);
@@ -52769,6 +52711,26 @@ function registerImagegen(server, client, deployment) {
 			};
 		}
 	});
+	readImageTool.disable();
+	const generateAppMeta = generateTool._meta ?? {};
+	const editAppMeta = editTool._meta ?? {};
+	server.server.oninitialized = () => {
+		const clientSupportsApps = Y3(server.server.getClientCapabilities())?.mimeTypes?.includes(p) === true;
+		generateTool.update({
+			description: clientSupportsApps ? generateAppDescription : generatePlainDescription,
+			paramsSchema: generateInputSchema,
+			callback: clientSupportsApps ? generateAppCallback : generatePlainCallback,
+			_meta: clientSupportsApps ? generateAppMeta : {}
+		});
+		editTool.update({
+			description: clientSupportsApps ? editAppDescription : editPlainDescription,
+			paramsSchema: editInputSchema,
+			callback: clientSupportsApps ? editAppCallback : editPlainCallback,
+			_meta: clientSupportsApps ? editAppMeta : {}
+		});
+		uiResource.update({ enabled: clientSupportsApps });
+		readImageTool.update({ enabled: clientSupportsApps });
+	};
 }
 //#endregion
 //#region mcp-server/server.ts

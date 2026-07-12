@@ -1,6 +1,5 @@
-// A tiny in-memory store for generated image bytes. When a tool isn't asked to
-// write to disk (no output_dir), the App UI fetches the bytes from here via
-// read_image({ id }) to display/save without touching the filesystem.
+// A tiny in-memory store for generated image bytes. The App UI fetches bytes via
+// read_image({ id }); any client can pass the same session id to edit_image.
 export interface ImageStore {
   put(b64: string, mimeType: string): string;
   get(id: string): { b64: string; mimeType: string } | undefined;

@@ -11,7 +11,6 @@ import {
   slugify,
   timestamp,
   resolveFilenames,
-  saveBase64Images,
   generate,
   edit,
   generateStream,
@@ -19,7 +18,6 @@ import {
   toImageFile,
   clientOptions,
   isPlaceholder,
-  readImageAsDataUri,
   storeBase64Images,
 } from "./client.ts";
 import { createImageStore } from "./store.ts";
@@ -82,40 +80,7 @@ test("resolveFilenames single and multiple", () => {
   ]);
 });
 
-test("saveBase64Images writes correct bytes", () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "imgtest-"));
-  const payload = Buffer.from("hello-png-bytes");
-  const data = [{ b64_json: payload.toString("base64"), revised_prompt: "hi" }];
-  const now = new Date(2026, 6, 4, 1, 2, 3);
-  const saved = saveBase64Images(data, { outputDir: dir, prompt: "hi", outputFormat: "png", now });
-  assert.equal(saved.length, 1);
-  assert.equal(saved[0].bytes, payload.length);
-  assert.equal(saved[0].revised_prompt, "hi");
-  assert.deepEqual(fs.readFileSync(saved[0].path), payload);
-  fs.rmSync(dir, { recursive: true, force: true });
-});
-
-test("readImageAsDataUri returns a data URI, but guards extension and existence", () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "imgtest-"));
-  const png = path.join(dir, "a.png");
-  const payload = Buffer.from("png-bytes");
-  fs.writeFileSync(png, payload);
-  assert.equal(
-    readImageAsDataUri(png).dataUri,
-    `data:image/png;base64,${payload.toString("base64")}`,
-  );
-
-  // A real but non-image file is rejected (blocks reading e.g. a key file).
-  const txt = path.join(dir, "secret.txt");
-  fs.writeFileSync(txt, "nope");
-  assert.throws(() => readImageAsDataUri(txt), /Not an image file/);
-
-  // An image extension that doesn't exist on disk is rejected.
-  assert.throws(() => readImageAsDataUri(path.join(dir, "missing.png")), /Image not found/);
-  fs.rmSync(dir, { recursive: true, force: true });
-});
-
-test("storeBase64Images keeps bytes in the store and returns handles (no disk write)", () => {
+test("storeBase64Images keeps bytes and returns session handles", () => {
   const store = createImageStore();
   const b64 = Buffer.from("img-bytes").toString("base64");
   const now = new Date(2026, 6, 4, 1, 2, 3);
@@ -124,7 +89,6 @@ test("storeBase64Images keeps bytes in the store and returns handles (no disk wr
     outputFormat: "png",
     now,
   });
-  assert.equal(res.path, undefined, "no path when not saved to disk");
   assert.equal(res.filename, "a-cat-20260704-010203.png");
   assert.equal(res.revised_prompt, "hi");
   assert.equal(res.bytes, Buffer.from("img-bytes").length);
@@ -334,16 +298,6 @@ test("clientOptions ignores a placeholder key and uses Entra instead", () => {
     AZURE_OPENAI_API_KEY: "${AZURE_OPENAI_API_KEY}",
   });
   assert.equal(typeof o.apiKey, "function");
-});
-
-test("saveBase64Images throws when b64_json is missing", () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "imgtest-"));
-  assert.throws(
-    () =>
-      saveBase64Images([{}], { outputDir: dir, prompt: "x", outputFormat: "png", now: new Date() }),
-    /missing base64/,
-  );
-  fs.rmSync(dir, { recursive: true, force: true });
 });
 
 test("toImageFile sets the mimetype from the file extension", async () => {

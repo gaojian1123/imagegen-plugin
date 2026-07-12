@@ -25,14 +25,9 @@ function setStatus(text: string): void {
   statusEl.style.display = text ? "block" : "none";
 }
 
-function basename(p: string): string {
-  return p.split(/[\\/]/).pop() || "image";
-}
-
-// One image from a tool result: `path` is set when it was saved to disk, `id`
-// when it's held in server memory; `filename` is the download name either way.
+// One image from a tool result. The session id fetches the bytes from the server;
+// filename is the client-side download name.
 interface ResultImage {
-  path?: string;
   id?: string;
   filename?: string;
   revised_prompt?: string;
@@ -42,7 +37,6 @@ interface ResultImage {
 interface ShownImage {
   dataUri: string;
   filename: string;
-  path?: string;
   revised_prompt?: string;
 }
 
@@ -110,7 +104,7 @@ function showFinal(items: ShownImage[]): void {
     save.addEventListener("click", () => void downloadImage(it, save));
     const meta = document.createElement("span");
     meta.className = "meta";
-    meta.textContent = it.path ?? `${it.filename} — not saved to disk (click Save to keep it)`;
+    meta.textContent = `${it.filename} — click Save to download`;
     bar.append(save, meta);
 
     card.append(img, bar);
@@ -129,7 +123,7 @@ function dataUriOf(result: { structuredContent?: Record<string, unknown> }): str
   return typeof d === "string" ? d : undefined;
 }
 
-// --- Streaming: poll read_image (no path) for the newest partial frame ---
+// --- Streaming: poll read_image (no id) for the newest partial frame ---
 let pollTimer: number | undefined;
 
 function stopPolling(): void {
@@ -176,16 +170,14 @@ app.ontoolresult = async (result) => {
   const images = (result.structuredContent?.images as ResultImage[] | undefined) ?? [];
   const resolved: ShownImage[] = [];
   for (const im of images) {
-    const arg = im.path ? { path: im.path } : im.id ? { id: im.id } : undefined;
-    if (!arg) continue;
+    if (!im.id) continue;
     try {
-      const r = await app.callServerTool({ name: "read_image", arguments: arg });
+      const r = await app.callServerTool({ name: "read_image", arguments: { id: im.id } });
       const d = dataUriOf(r);
       if (d)
         resolved.push({
           dataUri: d,
-          filename: im.filename ?? (im.path ? basename(im.path) : "image"),
-          path: im.path,
+          filename: im.filename ?? "image",
           revised_prompt: im.revised_prompt,
         });
     } catch {

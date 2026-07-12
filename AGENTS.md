@@ -27,10 +27,10 @@
 - **Secrets:** never commit credentials or put them in `.mcp.json`. The server reads
   `AZURE_OPENAI_*` from the environment.
 - **Env var names:** `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_KEY`,
-  `AZURE_OPENAI_IMAGE_DEPLOYMENT`. Output directory is a per-call `output_dir`
-  tool argument, not an env var; omit it to keep an in-app handle for MCP Apps
-  clients or return standard image content to other clients (no file written),
-  or pass it to save to disk.
+  `AZURE_OPENAI_IMAGE_DEPLOYMENT`. Generated output is never written to the
+  server filesystem. Every result gets a bounded session image id for later
+  edits; MCP Apps fetch bytes through `read_image`, while other clients receive
+  standard image content and save it client-side.
 
 ## Agent skills
 

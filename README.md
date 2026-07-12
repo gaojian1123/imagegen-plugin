@@ -7,15 +7,13 @@ OpenAI (Microsoft Foundry). It adds two MCP tools (`generate_image`,
 
 On hosts that support [MCP Apps](https://github.com/modelcontextprotocol/ext-apps),
 each generated/edited image renders inline in an interactive panel where you can
-view it and click **Save**. By default nothing is written to disk. App-capable
-hosts receive an in-memory id, and the panel fetches the bytes through its
-app-only `read_image` helper so they stay out of the model-visible tool result.
-Other hosts receive standard MCP image content and may retain it in the
-conversation context. Pass `output_dir` to save files and return paths instead.
-`edit_image` accepts either a file path or a previous result's in-app **id**, so
-you can edit an unsaved image without writing it first. During streaming
-(`partial_images > 0`) the panel shows intermediate frames live; streamed frames
-are never written to disk.
+view it and click **Save** to download through the host. The server never writes
+generated output to disk. Every result receives a bounded, in-memory **session
+image id**; the panel fetches bytes through the app-only `read_image` helper so
+they stay out of the model-visible tool result. Other hosts receive standard MCP
+image content plus the same id for later edits. `edit_image` accepts either a
+server-accessible file path or a previous result's session image id. During
+streaming (`partial_images > 0`) the panel shows intermediate frames live.
 
 ## Prerequisites
 
@@ -75,8 +73,9 @@ For Entra ID, omit `AZURE_OPENAI_API_KEY`; sign in with `az login` or use a
 managed identity or service principal. The identity needs the **Cognitive
 Services OpenAI User** role.
 
-Images are shown in MCP Apps and returned inline to other clients. They are
-**not** written to disk by default; pass `output_dir` to save files instead.
+Images are shown in MCP Apps and returned inline to other clients. Generated
+output is never written to the server filesystem; saving is handled by the host
+or client.
 
 ## Install
 

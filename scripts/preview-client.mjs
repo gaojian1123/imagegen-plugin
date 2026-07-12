@@ -1,8 +1,8 @@
-// Minimal client that proves the live-preview resource end to end: it spawns
-// the server, subscribes to imagegen://preview, and writes each streamed frame
-// to disk as the `resources/updated` notifications arrive — before the
-// generate_image call returns. Requires the AZURE_OPENAI_* env vars (a real
-// generation runs). Usage:
+// Minimal client that proves the live-preview resource end to end: it writes
+// streamed frames as `resources/updated` notifications arrive, then writes the
+// final standard image content returned by generate_image. All files are saved
+// client-side under preview-out. Requires AZURE_OPENAI_* (a real generation).
+// Usage:
 //   vp run build
 //   vp run preview "your prompt here"
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -49,20 +49,32 @@ try {
 
   const result = await client.callTool({
     name: "generate_image",
-    arguments: { prompt, partial_images: 3, quality: "medium", output_dir: outDir },
+    arguments: { prompt, partial_images: 3, quality: "medium" },
   });
 
   // Frame handlers are async re-reads; give any in-flight one a moment to finish
   // before we tear the transport down.
   await new Promise((r) => setTimeout(r, 300));
 
+  const final = result.content?.find((block) => block.type === "image");
+  if (!final) throw new Error("generate_image returned no final image content");
+  const resultName = result.structuredContent?.images?.[0]?.filename;
+  const finalName =
+    typeof resultName === "string"
+      ? path.basename(resultName)
+      : `final.${EXT[final.mimeType] ?? "png"}`;
+  const finalPath = path.join(outDir, finalName);
+  const finalBytes = Buffer.from(final.data, "base64");
+  fs.writeFileSync(finalPath, finalBytes);
+
   console.log("\ntool result:");
   for (const block of result.content ?? [])
     if (block.type === "text") console.log("  " + block.text.replace(/\n/g, "\n  "));
+  console.log(`  final image -> ${finalPath} (${finalBytes.length} bytes)`);
   console.log(`\ncaptured ${frames} live preview frame(s) in ${outDir}`);
   if (frames === 0)
     console.log(
-      "(the model emitted no partials this run — common for simple/fast prompts; the final image still saved)",
+      "(the model emitted no partials this run — common for simple/fast prompts; the client still saved the final image)",
     );
 
   await client.close();
